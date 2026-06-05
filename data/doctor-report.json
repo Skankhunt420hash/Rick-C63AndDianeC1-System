@@ -1,0 +1,14 @@
+﻿{
+    "ok":  true,
+    "app":  "Nemesis Droidijana -63",
+    "checked_at":  "2026-06-03T00:08:24.1550475+02:00",
+    "node_ready":  true,
+    "ollama_ready":  true,
+    "model_check_skipped":  false,
+    "issues":  [
+
+               ],
+    "repairs":  [
+                    "Verified Rick-C63 qwen3-coder:30b local model."
+                ]
+}

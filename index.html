@@ -1,0 +1,366 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nemesis Droidijana -63</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="cosmos" aria-hidden="true">
+      <div class="stars stars-a"></div>
+      <div class="stars stars-b"></div>
+      <div class="nebula nebula-one"></div>
+      <div class="nebula nebula-two"></div>
+      <div class="grid-floor"></div>
+      <div class="ray ray-one"></div>
+      <div class="ray ray-two"></div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <header class="app-shell">
+      <a class="brand" href="#home" data-route="home" aria-label="Nemesis Droidijana home">
+        <span class="brand-mark">N-63</span>
+        <span>
+          <strong>Nemesis Droidijana -63</strong>
+          <small>Powered by your Friend, Rick-C63!</small>
+        </span>
+      </a>
+      <nav class="top-nav" aria-label="Main navigation">
+        <button class="nav-link active" data-route="home">Home</button>
+        <button class="nav-link" data-route="chat">Rick-C63</button>
+        <button class="nav-link" data-route="reports">Reports</button>
+        <button class="nav-link" data-route="blueprint">Builder</button>
+        <button class="nav-link" data-route="empire">Empire</button>
+        <button class="nav-link" data-route="training">Training</button>
+        <button class="nav-link" data-route="legal">Legal</button>
+      </nav>
+      <button class="secondary-button admin-access-button" id="adminAccessButton" title="Admin access">Admin Lock</button>
+      <button class="icon-button" id="resetMemoryButton" title="Refresh current session" aria-label="Refresh current session">â†»</button>
+      <button class="icon-button" id="themePulseButton" title="Boost interface pulse" aria-label="Boost interface pulse">âš¡</button>
+    </header>
+
+    <main>
+      <section id="home" class="page active">
+        <div class="hero app-shell">
+          <div class="hero-copy">
+            <div class="status-pill">Local Mode active: Rick-C63 Cortex runs without paid external AI APIs.</div>
+            <h1>Nemesis Droidijana -63</h1>
+            <h2>Powered by your Friend, Rick-C63!</h2>
+            <p class="hero-subtext">Analyze any URL, screenshot, brand or idea. Break it down. Upgrade it. Build your own empire-level system.</p>
+            <p class="philosophy">You do not always need to reinvent the wheel. Sometimes you learn from the current, then build your own stronger river.</p>
+            <div class="hero-actions">
+              <button class="primary-button" data-route="chat">Open Rick-C63</button>
+              <button class="secondary-button" data-focus-input="true">Analyze New Target</button>
+            </div>
+          </div>
+
+          <aside class="orb-card" aria-label="Rick-C63 avatar">
+            <div class="rick-orb">
+              <span class="orb-core"></span>
+              <span class="orbit orbit-a"></span>
+              <span class="orbit orbit-b"></span>
+              <span class="orb-face">R</span>
+            </div>
+            <h3>Rick-C63</h3>
+            <p>The Mad Genius Architect of Nemesis Droidijana</p>
+            <div class="mini-metrics">
+              <span>Legal guard: online</span>
+              <span>Blueprint forge: ready</span>
+            </div>
+          </aside>
+        </div>
+
+        <div class="app-shell dashboard-grid">
+          <section class="panel input-panel" id="homeInputPanel">
+            <div class="section-heading">
+              <span>Start New Analysis</span>
+              <small>URL, screenshot, brand, product, landing page or raw idea</small>
+            </div>
+            <form id="analysisForm" class="analysis-form">
+              <label>
+                URL
+                <input id="targetUrl" type="url" placeholder="https://example.com/product">
+              </label>
+              <label>
+                Upload image
+                <input id="targetFile" type="file" accept="image/*">
+              </label>
+              <label>
+                Idea or notes
+                <textarea id="targetText" rows="5" placeholder="Describe the app, business, screen, logo inspiration or concept..."></textarea>
+              </label>
+              <label>
+                Analysis type
+                <select id="analysisType">
+                  <option>Website Analysis</option>
+                  <option>Screenshot Analysis</option>
+                  <option>Brand Analysis</option>
+                  <option>App Idea Breakdown</option>
+                  <option>Business Model Analysis</option>
+                  <option>Legal Rebuild Plan</option>
+                  <option>Full Nemesis Upgrade</option>
+                  <option>Build Blueprint</option>
+                </select>
+              </label>
+              <div id="previewArea" class="preview-area hidden"></div>
+              <button class="primary-button full-width" type="submit">Analyze Target</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">
+              <span>Recent Analyses</span>
+              <small>Reports generated by Rick-C63</small>
+            </div>
+            <div id="recentAnalyses" class="card-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">
+              <span>Saved Empire Projects</span>
+              <small>Blueprints ready to build</small>
+            </div>
+            <div id="savedProjects" class="card-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="chat" class="page">
+        <div class="app-shell chat-layout">
+          <aside class="panel side-panel">
+            <div class="section-heading">
+              <span>Project Input</span>
+              <small>Current project, memories and saved context</small>
+            </div>
+            <div id="contextPanel" class="context-list"></div>
+            <button class="secondary-button full-width" data-focus-input="true">New Target</button>
+          </aside>
+
+          <section class="panel chat-panel">
+            <div class="chat-header">
+              <div class="small-orb"></div>
+              <div>
+                <h2>Rick-C63 Planning Studio</h2>
+                <p>Scan neue Ziele oder plane mit Rick-C63 am aktuellen Projekt. Analyse und Planung sind getrennt.</p>
+              </div>
+            </div>
+            <div class="chat-mode-toggle" role="group" aria-label="Rick-C63 mode">
+              <button class="mode-button active" data-chat-mode="plan">Plan Project</button>
+              <button class="mode-button" data-chat-mode="scan">Scan URL / Idea</button>
+            </div>
+            <div id="planningBoard" class="planning-board"></div>
+            <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+            <form id="chatForm" class="chat-form">
+              <input id="chatInput" type="text" placeholder="Plan Mode: Sag Rick, was wir an der App Ã¤ndern oder erweitern sollen...">
+              <button class="primary-button" type="submit">Send</button>
+            </form>
+          </section>
+
+          <aside class="panel action-panel">
+            <div class="section-heading">
+              <span>Actions</span>
+              <small>Every response becomes buildable</small>
+            </div>
+            <div id="actionCards" class="action-cards"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="reports" class="page">
+        <div class="app-shell">
+          <div class="page-title">
+            <h2>Analysis Result Page</h2>
+            <p>Each report identifies the public concept, legal boundaries, upgrade path, monetization, MVP and full build plan.</p>
+          </div>
+          <div id="reportsGrid" class="reports-grid"></div>
+        </div>
+      </section>
+
+      <section id="blueprint" class="page">
+        <div class="app-shell blueprint-layout">
+          <section class="panel">
+            <div class="section-heading">
+              <span>Project Launchpad</span>
+              <small>Idee wÃ¤hlen, Rick entscheiden lassen, Software bauen, Ã¶ffnen, speichern.</small>
+            </div>
+            <div class="portal-stage" aria-hidden="true">
+              <div class="dimension-portal"></div>
+              <div class="tiny-being being-a"></div>
+              <div class="tiny-being being-b"></div>
+            </div>
+            <div id="projectFlow" class="project-flow"></div>
+            <div class="builder-explain">
+              Blueprint = Software Bauplan. Er beschreibt, was die App kann, fuer wen sie ist, welche Seiten, Datenbanktabellen, API-Routen, Verbindungen und Entwicklungsschritte gebraucht werden.
+            </div>
+            <div id="rickSuggestions" class="suggestion-grid"></div>
+            <div id="builderSettings" class="builder-settings"></div>
+            <div id="blueprintEditor" class="blueprint-editor"></div>
+            <div id="blueprintDetail" class="blueprint-detail"></div>
+            <div class="button-row">
+              <button class="primary-button" id="saveBlueprintButton">Save Blueprint</button>
+              <button class="secondary-button" id="exportPromptButton">Export Prompt</button>
+              <button class="secondary-button" id="tasksButton">Generate Development Tasks</button>
+              <button class="secondary-button" id="addEmpireButton">Add to Empire Dashboard</button>
+              <button class="secondary-button" id="openBuilderButton">Generate Software</button>
+              <button class="secondary-button" id="connectProductButton">Connect to My Pages</button>
+              <button class="secondary-button" id="exportHubButton">Export / Send</button>
+            </div>
+            <div id="builderOutput" class="builder-output"></div>
+          </section>
+          <aside class="panel">
+            <div class="section-heading">
+              <span>Development Tasks</span>
+              <small>Generated from the current blueprint</small>
+            </div>
+            <ol id="taskList" class="task-list"></ol>
+          </aside>
+        </div>
+      </section>
+
+      <section id="empire" class="page">
+        <div class="app-shell">
+          <div class="page-title">
+            <h2>Empire Dashboard</h2>
+            <p>Every original concept gets a status, score and next step.</p>
+          </div>
+          <div id="empireStats" class="stats-grid"></div>
+          <div id="empireProjects" class="project-grid"></div>
+        </div>
+      </section>
+
+      <section id="training" class="page">
+        <div class="app-shell training-layout">
+          <section class="panel training-config">
+            <div class="section-heading">
+              <span>Training Lab</span>
+              <small>Public web collection, dataset prep and fine-tuning package export</small>
+            </div>
+            <p class="training-copy">Give the system a topic, seed URLs and allowed domains. It collects public sources, prepares instruction data and exports a training package you can feed into Axolotl, Unsloth or another fine-tuning stack.</p>
+            <form id="trainingForm" class="training-form">
+              <label>
+                Topic
+                <input id="trainingTopic" type="text" placeholder="Example: local cybersecurity support automation">
+              </label>
+              <label>
+                Objective
+                <textarea id="trainingObjective" rows="4" placeholder="What should the model learn or do better?"></textarea>
+              </label>
+              <label>
+                Seed URLs
+                <textarea id="trainingSeeds" rows="4" placeholder="One public URL per line"></textarea>
+              </label>
+              <label>
+                Allowed domains
+                <textarea id="trainingDomains" rows="3" placeholder="example.com, docs.example.org"></textarea>
+              </label>
+              <label>
+                Base model
+                <input id="trainingModel" type="text" value="Qwen/Qwen2.5-Coder-1.5B-Instruct">
+              </label>
+              <label>
+                Hugging Face namespace
+                <input id="trainingNamespace" type="text" placeholder="your-username-or-org">
+              </label>
+              <label>
+                Hugging Face flavor
+                <select id="trainingFlavor">
+                  <option value="a10g-small">a10g-small</option>
+                  <option value="a10g-large">a10g-large</option>
+                  <option value="l4x1">l4x1</option>
+                  <option value="l4x4">l4x4</option>
+                  <option value="l40sx1">l40sx1</option>
+                  <option value="a100-large">a100-large</option>
+                </select>
+              </label>
+              <div class="training-inline">
+                <label>
+                  Max pages
+                  <input id="trainingPages" type="number" min="1" max="48" value="12">
+                </label>
+                <label>
+                  Crawl depth
+                  <input id="trainingDepth" type="number" min="0" max="3" value="1">
+                </label>
+              </div>
+              <label class="checkbox-row">
+                <input id="trainingAutoDiscover" type="checkbox" checked>
+                <span>Auto-discover public sources from search results</span>
+              </label>
+              <label class="checkbox-row">
+                <input id="trainingPrivateDataset" type="checkbox" checked>
+                <span>Create the dataset repo as private</span>
+              </label>
+              <label class="checkbox-row">
+                <input id="trainingPrivateModel" type="checkbox" checked>
+                <span>Create the output model repo as private</span>
+              </label>
+              <label class="checkbox-row">
+                <input id="trainingLaunchHf" type="checkbox" checked>
+                <span>Launch the training job on Hugging Face Jobs</span>
+              </label>
+              <div class="button-row">
+                <button class="primary-button" type="submit">Start Automation</button>
+                <button class="secondary-button" type="button" id="trainingRefreshButton">Refresh Jobs</button>
+              </div>
+            </form>
+          </section>
+          <section class="panel training-jobs-panel">
+            <div class="section-heading">
+              <span>Training Jobs</span>
+              <small>Status, sources, examples and export package</small>
+            </div>
+            <div id="trainingStatus" class="stats-grid"></div>
+            <div id="trainingJobs" class="training-job-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="legal" class="page">
+        <div class="app-shell legal-layout">
+          <section class="panel legal-card allowed">
+            <h2>Allowed</h2>
+            <ul>
+              <li>Analyze public concepts</li>
+              <li>Use official APIs and OAuth</li>
+              <li>Use user-owned data</li>
+              <li>Use screenshots for inspiration</li>
+              <li>Create original layouts and branding</li>
+              <li>Create similar functionality with original code</li>
+            </ul>
+          </section>
+          <section class="panel legal-card blocked">
+            <h2>Not Allowed</h2>
+            <ul>
+              <li>Copy logos, protected names, exact layouts or code</li>
+              <li>Bypass login or steal private data</li>
+              <li>Scrape against rules or impersonate a company</li>
+              <li>Create malware-like behavior or automate abuse</li>
+            </ul>
+          </section>
+          <section class="panel legal-wide">
+            <h2>The Legal Core</h2>
+            <p>We do not steal kingdoms. We learn how castles are built, then we design our own fortress.</p>
+            <p>Rick-C63 redirects risky shortcuts into legal API integration, user-authorized automation, ethical competitive research and own-brand product development.</p>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-panel">
+        <button class="modal-close" id="modalClose" aria-label="Close modal">Ã—</button>
+        <h2 id="modalTitle"></h2>
+        <div id="modalBody"></div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+
+
