@@ -8,7 +8,7 @@ import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 const ROOT = process.cwd();
 const DATA_DIR = join(ROOT, "data");
-const DB_PATH = join(DATA_DIR, "nemesis-db.json");
+const DB_PATH = join(DATA_DIR, "erleuchtung-db.json");
 const DOCTOR_PATH = join(DATA_DIR, "doctor-report.json");
 const GENERATED_DIR = join(ROOT, "generated-products");
 const PORT = Number(process.env.PORT || 8787);

@@ -9,7 +9,7 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $runtime = Join-Path $root "runtime"
 $dataDir = Join-Path $root "data"
-$db = Join-Path $dataDir "nemesis-db.json"
+$db = Join-Path $dataDir "erleuchtung-db.json"
 $report = Join-Path $dataDir "doctor-report.json"
 $node = Join-Path $runtime "node\node.exe"
 $ollama = Join-Path $runtime "ollama\ollama.exe"
@@ -51,7 +51,7 @@ if (-not (Test-Path -LiteralPath $db)) {
     Get-Content -LiteralPath $db -Raw | ConvertFrom-Json | Out-Null
   } catch {
     Add-Issue "Local database JSON was damaged."
-    $backup = Join-Path $dataDir ("nemesis-db.damaged-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
+    $backup = Join-Path $dataDir ("erleuchtung-db.damaged-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
     Copy-Item -LiteralPath $db -Destination $backup
     @'
 {

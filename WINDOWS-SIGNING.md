@@ -21,7 +21,7 @@ Before starting Erleuchtung:
 ```powershell
 $env:WINDOWS_CODESIGN_PFX="C:\secure\your-company-code-signing.pfx"
 $env:WINDOWS_CODESIGN_PASSWORD="your-pfx-password"
-powershell -ExecutionPolicy Bypass -File scripts\start-nemesis.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start-erleuchtung.ps1
 ```
 
 When a `.pfx` is configured, Erleuchtung signs with SHA-256, timestamps the executable and runs Authenticode verification. A failed signature or verification stops the export.

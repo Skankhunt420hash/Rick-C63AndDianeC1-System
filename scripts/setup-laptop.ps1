@@ -16,4 +16,4 @@ powershell -ExecutionPolicy Bypass -File scripts\ensure-rick-model.ps1
 
 Write-Host ""
 Write-Host "Setup finished. Start the app with:"
-Write-Host "powershell -ExecutionPolicy Bypass -File scripts\start-nemesis.ps1"
+Write-Host "powershell -ExecutionPolicy Bypass -File scripts\start-erleuchtung.ps1"

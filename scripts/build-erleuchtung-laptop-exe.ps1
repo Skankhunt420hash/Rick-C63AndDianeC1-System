@@ -3,10 +3,10 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $exports = Join-Path $root "exports"
-$stage = Join-Path $root ".nemesis-exe-stage"
-$payload = Join-Path $stage "nemesis-droidijana-63-payload.zip"
-$exe = Join-Path $exports "Nemesis-Rick-Droidijana-63.exe"
-$source = Join-Path $stage "NemesisInstaller.cs"
+$stage = Join-Path $root ".erleuchtung-exe-stage"
+$payload = Join-Path $stage "erleuchtung-rick-c63-diane-c1-system-payload.zip"
+$exe = Join-Path $exports "Rick-C63AndDianeC1-System.exe"
+$source = Join-Path $stage "ErleuchtungInstaller.cs"
 
 if (Test-Path -LiteralPath $stage) {
   Remove-Item -LiteralPath $stage -Recurse -Force
@@ -33,7 +33,7 @@ Copy-Item -LiteralPath (Join-Path $root "scripts") -Destination $payloadRoot -Re
   "memories": [],
   "sessions": []
 }
-'@ | Set-Content -LiteralPath (Join-Path $payloadRoot "data\nemesis-db.json") -Encoding UTF8
+'@ | Set-Content -LiteralPath (Join-Path $payloadRoot "data\erleuchtung-db.json") -Encoding UTF8
 
 Compress-Archive -Path (Join-Path $payloadRoot "*") -DestinationPath $payload -CompressionLevel Optimal
 
@@ -45,7 +45,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Windows.Forms;
 
-internal static class NemesisInstaller
+internal static class ErleuchtungInstaller
 {
     [STAThread]
     private static void Main()
@@ -54,7 +54,7 @@ internal static class NemesisInstaller
         {
             var installDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "NemesisDroidijana63"
+                "RickC63AndDianeC1System"
             );
             Directory.CreateDirectory(installDir);
             ExtractPayload(installDir);
@@ -71,22 +71,22 @@ internal static class NemesisInstaller
             };
             Process.Start(info);
             MessageBox.Show(
-                "Nemesis Droidijana -63 is starting locally.\n\nOn the first launch, the Self-Healing Doctor installs missing runtimes and downloads the approximately 18GB Rick-C63 model if needed. The browser opens when the local system is ready.",
-                "Nemesis Rick & Droidijana",
+                "Erleuchtung is starting locally.\n\nOn the first launch, the Self-Healing Doctor installs missing runtimes and downloads the approximately 18GB Rick-C63 model if needed. The browser opens when the local system is ready.",
+                "Rick-C63 & Diane-C1",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information
             );
         }
         catch (Exception error)
         {
-            MessageBox.Show(error.Message, "Nemesis installation failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(error.Message, "Erleuchtung installation failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
     private static void ExtractPayload(string installDir)
     {
         var assembly = Assembly.GetExecutingAssembly();
-        using (var payload = assembly.GetManifestResourceStream("NemesisPayload.zip"))
+        using (var payload = assembly.GetManifestResourceStream("ErleuchtungPayload.zip"))
         using (var archive = new ZipArchive(payload, ZipArchiveMode.Read))
         {
             foreach (var entry in archive.Entries)
@@ -101,7 +101,7 @@ internal static class NemesisInstaller
                     continue;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(destination));
-                if (normalizedEntry.Equals("data/nemesis-db.json", StringComparison.OrdinalIgnoreCase) && File.Exists(destination))
+                if (normalizedEntry.Equals("data/erleuchtung-db.json", StringComparison.OrdinalIgnoreCase) && File.Exists(destination))
                     continue;
                 entry.ExtractToFile(destination, true);
             }
@@ -121,15 +121,15 @@ $cscArgs = @(
   "/reference:System.Windows.Forms.dll",
   "/reference:System.IO.Compression.dll",
   "/reference:System.IO.Compression.FileSystem.dll",
-  "/resource:$payload,NemesisPayload.zip",
+  "/resource:$payload,ErleuchtungPayload.zip",
   "/out:$exe",
   $source
 )
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exe)) {
-  throw "Nemesis laptop EXE compilation failed."
+  throw "Erleuchtung laptop EXE compilation failed."
 }
 
 Remove-Item -LiteralPath $stage -Recurse -Force
-Write-Host "Nemesis laptop EXE created:"
+Write-Host "Erleuchtung laptop EXE created:"
 Write-Host $exe

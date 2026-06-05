@@ -36,7 +36,7 @@ Copy-Item -LiteralPath (Join-Path $root "scripts") -Destination $stage -Recurse
   "memories": [],
   "sessions": []
 }
-'@ | Set-Content -LiteralPath (Join-Path $stage "data\nemesis-db.json") -Encoding UTF8
+'@ | Set-Content -LiteralPath (Join-Path $stage "data\erleuchtung-db.json") -Encoding UTF8
 
 @'
 # Laptop package
