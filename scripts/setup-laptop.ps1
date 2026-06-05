@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-Write-Host "Nemesis Droidijana -63 laptop setup"
+Write-Host "Erleuchtung laptop setup"
 Write-Host "Installing portable Node.js runtime..."
 powershell -ExecutionPolicy Bypass -File scripts\install-node-runtime.ps1
 

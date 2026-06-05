@@ -21,7 +21,7 @@ if (-not (Test-Path -LiteralPath $portableNode) -and -not (Get-Command node.exe 
   powershell -ExecutionPolicy Bypass -File scripts\install-node-runtime.ps1
 }
 
-Write-Host "Starting Nemesis Droidijana -63..."
+Write-Host "Starting Erleuchtung..."
 Write-Host "Open: http://localhost:8787"
 
 if (Test-Path -LiteralPath $portableNode) {

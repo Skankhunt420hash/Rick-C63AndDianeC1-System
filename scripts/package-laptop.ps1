@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $stage = Join-Path $root ".laptop-package"
 $exports = Join-Path $root "exports"
-$zip = Join-Path $exports "nemesis-droidijana-63-laptop-v5.zip"
+$zip = Join-Path $exports "erleuchtung-rick-c63-diane-c1-system-laptop-v5.zip"
 
 if (Test-Path -LiteralPath $stage) {
   Remove-Item -LiteralPath $stage -Recurse -Force
@@ -21,8 +21,8 @@ Copy-Item -LiteralPath (Join-Path $root "server.js") -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root "package.json") -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root "WINDOWS-SIGNING.md") -Destination $stage
-Copy-Item -LiteralPath (Join-Path $root "Install Nemesis Droidijana.cmd") -Destination $stage
-Copy-Item -LiteralPath (Join-Path $root "Start Nemesis Droidijana.cmd") -Destination $stage
+Copy-Item -LiteralPath (Join-Path $root "Install Erleuchtung.cmd") -Destination $stage
+Copy-Item -LiteralPath (Join-Path $root "Start Erleuchtung.cmd") -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root "scripts") -Destination $stage -Recurse
 
 @'
@@ -41,18 +41,18 @@ Copy-Item -LiteralPath (Join-Path $root "scripts") -Destination $stage -Recurse
 @'
 # Laptop package
 
-This lightweight package contains the Nemesis Droidijana app and setup scripts.
+This lightweight package contains the Erleuchtung app and setup scripts.
 
 First setup: double-click:
 
 ```text
-Install Nemesis Droidijana.cmd
+Install Erleuchtung.cmd
 ```
 
 Then start with:
 
 ```text
-Start Nemesis Droidijana.cmd
+Start Erleuchtung.cmd
 ```
 
 Open:

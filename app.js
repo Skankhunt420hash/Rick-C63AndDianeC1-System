@@ -1,4 +1,10 @@
-const STORAGE_KEY = "nemesis-droidijana-63";
+const BRAND = {
+  shortName: "Erleuchtung",
+  fullName: "Erleuchtung (Rick-C63 & Diane-Droidijana)",
+  crewName: "Rick-C63 & Diane-Droidijana"
+};
+
+const STORAGE_KEY = "erleuchtung-rick-c63-diane-droidijana";
 
 const env = {
   AI_PROVIDER: "demo",
@@ -8,7 +14,7 @@ const env = {
   STORAGE_BUCKET: "browser-local",
   MAX_UPLOAD_SIZE: 8 * 1024 * 1024,
   ENABLE_DEMO_MODE: true,
-  APP_NAME: "Nemesis Droidijana -63",
+  APP_NAME: BRAND.fullName,
   APP_URL: location.href
 };
 
@@ -20,7 +26,7 @@ const api = {
 const schema = {
   user: ["id", "name", "email", "plan", "created_at", "updated_at"],
   agentSession: ["id", "user_id", "agent_name", "title", "messages", "created_at", "updated_at"],
-  analysisTarget: ["id", "user_id", "input_type", "url", "uploaded_file_url", "text_input", "title", "category", "status", "created_at", "updated_at"],
+  analysisTarget: ["id", "user_id", "input_type", "url", "uploaded_file_url", "uploaded_file_name", "uploaded_file_size", "uploaded_file_type", "text_input", "title", "category", "status", "created_at", "updated_at"],
   analysisReport: ["id", "target_id", "summary", "purpose", "target_audience", "visible_features", "design_style", "business_model", "strengths", "weaknesses", "legal_risks", "do_not_copy", "legal_inspiration_points", "upgrade_opportunities", "nemesis_upgrade_idea", "suggested_names", "mvp_plan", "empire_plan", "tech_stack", "monetization", "created_at", "updated_at"],
   blueprint: ["id", "user_id", "report_id", "project_name", "tagline", "problem", "target_user", "features", "premium_features", "frontend_pages", "backend_services", "database_schema", "api_routes", "auth_requirements", "file_upload_requirements", "ai_requirements", "admin_requirements", "roadmap", "test_plan", "deployment_plan", "created_at", "updated_at"],
   empireProject: ["id", "user_id", "blueprint_id", "name", "description", "status", "priority", "difficulty_score", "monetization_score", "legal_safety_score", "next_step", "created_at", "updated_at"],
@@ -32,7 +38,7 @@ const defaultState = {
     id: "user_elija_demo",
     name: "Elija",
     email: "elija@nemesis.local",
-    plan: "Empire Demo",
+    plan: "Erleuchtung Demo",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   },
@@ -57,6 +63,7 @@ const defaultState = {
 };
 
 let state = loadState();
+let previewObjectUrl = "";
 
 const els = {};
 
@@ -165,7 +172,7 @@ function wireEvents() {
     snapshotBlueprint(blueprint, "Manual blueprint save");
     saveState();
     renderAll();
-    toast("Blueprint saved to local Nemesis project memory.");
+    toast("Blueprint saved to local Erleuchtung project memory.");
   });
   els.trainingForm?.addEventListener("submit", handleTrainingSubmit);
   els.trainingRefreshButton?.addEventListener("click", () => {
@@ -211,9 +218,8 @@ function handleAnalysisSubmit(event) {
     return;
   }
 
-  const fileUrl = file ? URL.createObjectURL(file) : "";
   const inputType = determineInputType({ url, text, file, analysisType });
-  const target = createTarget({ url, text, fileUrl, inputType, analysisType });
+  const target = createTarget({ url, text, file, inputType, analysisType });
   const safety = legalSafetyCheck(`${url} ${text} ${analysisType}`);
 
   if (!safety.allowed) {
@@ -241,16 +247,20 @@ function handleAnalysisSubmit(event) {
 function handleFilePreview() {
   const file = els.targetFile.files[0];
   if (!file) {
+    revokePreviewObjectUrl();
     els.previewArea.classList.add("hidden");
     els.previewArea.innerHTML = "";
     return;
   }
   if (file.size > env.MAX_UPLOAD_SIZE) {
     toast("File is bigger than MAX_UPLOAD_SIZE demo limit.");
+    revokePreviewObjectUrl();
     els.targetFile.value = "";
     return;
   }
+  revokePreviewObjectUrl();
   const url = URL.createObjectURL(file);
+  previewObjectUrl = url;
   els.previewArea.innerHTML = `<img src="${url}" alt="Uploaded target preview">`;
   els.previewArea.classList.remove("hidden");
 }
@@ -285,7 +295,7 @@ function setChatMode(mode) {
   });
   els.chatInput.placeholder = state.chatMode === "scan"
     ? "Scan Mode: URL, Screenshot-Idee oder neue App eingeben..."
-    : "Plan Mode: Sag Rick, was wir an der aktuellen App ändern oder erweitern sollen...";
+    : "Plan Mode: Sag Rick, was wir an der aktuellen App Ã¤ndern oder erweitern sollen...";
   saveState();
   renderPlanningBoard();
 }
@@ -312,7 +322,7 @@ function determineInputType({ url, text, file, analysisType }) {
   return "Text description of an app/business idea";
 }
 
-function createTarget({ url = "", text = "", fileUrl = "", inputType = "Text Idea", analysisType = "Full Nemesis Upgrade" }) {
+function createTarget({ url = "", text = "", file = null, inputType = "Text Idea", analysisType = "Full Erleuchtung Upgrade" }) {
   const title = guessTitle(url, text, analysisType);
   const now = new Date().toISOString();
   const target = {
@@ -320,7 +330,10 @@ function createTarget({ url = "", text = "", fileUrl = "", inputType = "Text Ide
     user_id: state.user.id,
     input_type: inputType,
     url,
-    uploaded_file_url: fileUrl,
+    uploaded_file_url: "",
+    uploaded_file_name: file?.name || "",
+    uploaded_file_size: file?.size || 0,
+    uploaded_file_type: file?.type || "",
     text_input: text,
     title,
     category: analysisType,
@@ -336,7 +349,7 @@ function createAnalysisReport(target, analysisType) {
   const now = new Date().toISOString();
   const concept = target.title;
   const metadata = fetchPublicPageMetadata(target.url);
-  const imageSignals = analyzeImagePlaceholder(target.uploaded_file_url);
+  const imageSignals = analyzeImagePlaceholder(target.uploaded_file_name || target.uploaded_file_type || target.uploaded_file_url);
   const textSignals = analyzeTextIdea(target.text_input || analysisType);
   const archetype = inferProductArchetype(`${target.url} ${target.text_input} ${analysisType}`);
   const ideas = generateSourceIdeas(target, archetype);
@@ -382,7 +395,7 @@ function createBlueprintFromReport(report) {
     id: id("blueprint"),
     user_id: state.user.id,
     report_id: report.id,
-    project_name: report.suggested_names[0] || "Nemesis Upgrade System",
+    project_name: report.suggested_names[0] || "Erleuchtung Upgrade System",
     tagline: "Understand the mechanism. Rebuild the legal core. Generate the first software version.",
     problem: report.purpose,
     target_user: report.target_audience,
@@ -425,17 +438,17 @@ function fetchPublicPageMetadata(url) {
   };
 }
 
-function uploadScreenshotPlaceholder(fileUrl) {
+function uploadScreenshotPlaceholder(fileLabel) {
   return {
-    stored: Boolean(fileUrl),
-    uploaded_file_url: fileUrl,
+    stored: Boolean(fileLabel),
+    uploaded_file_url: fileLabel,
     storage: env.STORAGE_BUCKET,
-    note: fileUrl ? "Demo object URL created for local preview." : "No screenshot supplied."
+    note: fileLabel ? `Demo image attached: ${fileLabel}` : "No screenshot supplied."
   };
 }
 
-function analyzeImagePlaceholder(fileUrl) {
-  const upload = uploadScreenshotPlaceholder(fileUrl);
+function analyzeImagePlaceholder(fileLabel) {
+  const upload = uploadScreenshotPlaceholder(fileLabel);
   if (!upload.stored) return [];
   return ["Uploaded image preview", "Visual hierarchy scan placeholder", "Brand and layout inspiration check placeholder"];
 }
@@ -460,9 +473,9 @@ function localRickCortex(prompt) {
       url: extractedUrl || "",
       text: prompt,
       inputType: extractedUrl ? "Website URL from chat" : "Chat idea",
-      analysisType: intent === "build" ? "Build Blueprint" : "Full Nemesis Upgrade"
+      analysisType: intent === "build" ? "Build Blueprint" : "Full Erleuchtung Upgrade"
     });
-    report = createAnalysisReport(target, intent === "build" ? "Build Blueprint" : "Full Nemesis Upgrade");
+    report = createAnalysisReport(target, intent === "build" ? "Build Blueprint" : "Full Erleuchtung Upgrade");
     const newBlueprint = createBlueprintFromReport(report);
     ensureEmpireProjectForBlueprint(newBlueprint, report, "Auto-saved from Rick-C63 chat.");
   }
@@ -489,7 +502,7 @@ function localRickCortex(prompt) {
   }
 
   return {
-    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 Gedächtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder öffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 GedÃ¤chtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder Ã¶ffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
   };
 }
 
@@ -524,7 +537,7 @@ function rickVoiceLine(mode = "analysis") {
     analysis: [
       "Alright Elija. Ich sehe den Motor unter der Chrom-Leiche. Keine Panik, nur Architektur.",
       "Okay, das Ding hat eine Seele aus Workflow und eine Steuererklaerung aus UX. Wir machen es besser.",
-      "Ich hoere die Zahnräder klicken. Das ist kein Wunder, das ist ein System mit Make-up."
+      "Ich hoere die ZahnrÃ¤der klicken. Das ist kein Wunder, das ist ein System mit Make-up."
     ],
     build: [
       "Builder-Modus. Jetzt wird aus Nebel Beton. Sehr duester, sehr praktisch.",
@@ -532,9 +545,9 @@ function rickVoiceLine(mode = "analysis") {
       "Zeit fuer Produkt-Alchemie: weniger Gerede, mehr Maschine."
     ],
     memory: [
-      "Gedächtnis aktiv. Ich vergesse nur langweilige Fehler, nicht deine Projekte.",
+      "GedÃ¤chtnis aktiv. Ich vergesse nur langweilige Fehler, nicht deine Projekte.",
       "Projekt wieder im Kopf. Der mentale Keller ist dunkel, aber sortiert.",
-      "Ich habe die Akte geladen. Sie hat Neonränder und vermutlich bessere Zukunftschancen als die meisten Startups."
+      "Ich habe die Akte geladen. Sie hat NeonrÃ¤nder und vermutlich bessere Zukunftschancen als die meisten Startups."
     ]
   };
   const bucket = lines[mode] || lines.analysis;
@@ -619,7 +632,7 @@ function generateSourceIdeas(target, archetype) {
       "Save every decision to Empire memory so the project gets smarter with each session."
     ],
     nemesis: `${baseName} becomes an original AI build laboratory: the user gives a URL, screenshot or idea, Rick-C63 extracts the legal mechanism, proposes stronger versions and generates the first software blueprint.`,
-    names: [`${baseName} Forge`, `${baseName} Reactor`, `${baseName} Builder`, `Nemesis ${baseName}`],
+    names: [`${baseName} Forge`, `${baseName} Reactor`, `${baseName} Builder`, `Erleuchtung ${baseName}`],
     mvp: [
       `${baseName} intake for URL, screenshot or idea`,
       `Rick-C63 creates a fresh ${domain} analysis`,
@@ -710,7 +723,7 @@ function buildTestPlan(report) {
 
 function buildRickSuggestions(report, blueprint) {
   const archetype = inferProductArchetype(report.summary);
-  const base = titleToName(blueprint.project_name || report.suggested_names?.[0] || "Nemesis");
+  const base = titleToName(blueprint.project_name || report.suggested_names?.[0] || "Erleuchtung");
   const common = {
     legal: "Original code, original UI, no protected assets.",
     pages: blueprint.frontend_pages
@@ -813,8 +826,8 @@ function generateTacticalIdeas(prompt, report) {
 }
 
 function generateProductPackage(blueprint, report, prompt = "") {
-  const name = blueprint.project_name || "Nemesis Generated App";
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "nemesis-app";
+  const name = blueprint.project_name || "Erleuchtung Generated App";
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "erleuchtung-app";
   return {
     name,
     slug,
@@ -840,7 +853,7 @@ function generateProductPackage(blueprint, report, prompt = "") {
     routes: blueprint.api_routes,
     pages: blueprint.frontend_pages,
     connections: [
-      "Connect as a new page inside Nemesis Droidijana",
+      "Connect as a new page inside Erleuchtung",
       "Connect to Empire Dashboard as a saved product",
       "Connect to Rick-C63 memory so future chats know the project",
       "Later connect to a real local build workspace"
@@ -892,7 +905,7 @@ async function generateProductBuild() {
   if (!state.builderChoice) {
     renderRickSuggestions();
     els.rickSuggestions.scrollIntoView({ behavior: "smooth", block: "center" });
-    toast("Wähle zuerst eine Rick-C63 Richtung. Keine Glücksrad-Software.");
+    toast("WÃ¤hle zuerst eine Rick-C63 Richtung. Keine GlÃ¼cksrad-Software.");
     return;
   }
   if (!(state.blueprintVersions || []).some((item) => item.blueprint_id === blueprint.id)) {
@@ -903,7 +916,7 @@ async function generateProductBuild() {
   const product = generateProductPackage(blueprint, report, "Builder button");
   saveProductPackage(product, blueprint, report);
   let build = null;
-  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt eine echte Software. Das kann einen Moment dauern, die Maschine waermt die dunklen Zahnräder.</div>`;
+  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt eine echte Software. Das kann einen Moment dauern, die Maschine waermt die dunklen ZahnrÃ¤der.</div>`;
   if (api.available) {
     const response = await apiPost("/api/product/build", { product });
     build = response?.build || null;
@@ -918,13 +931,13 @@ async function generateProductBuild() {
   wireBuildPreviewButtons(els.builderOutput);
   openModal("Rick-C63 Software Generator", `${html}${buildHtml}`);
   wireBuildPreviewButtons(els.modalBody);
-  toast(build ? "Software generiert. Du kannst sie jetzt öffnen." : "Produktpaket gespeichert. Backend starten fuer echte Software.");
+  toast(build ? "Software generiert. Du kannst sie jetzt Ã¶ffnen." : "Produktpaket gespeichert. Backend starten fuer echte Software.");
 }
 
 function renderBuildResult(build) {
   return `<div class="builder-output">
     <h4>Fertige Software</h4>
-    <p>Rick-C63 hat eine direkt öffnbare App gebaut.</p>
+    <p>Rick-C63 hat eine direkt Ã¶ffnbare App gebaut.</p>
     <div class="button-row">
       <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">Open Software</a>
       <button class="secondary-button" data-preview-url="${build.url}">Preview Here</button>
@@ -960,7 +973,7 @@ function openExportHub() {
   }
   const product = generateProductPackage(blueprint, report, "Export Hub");
   const html = `<div class="export-hub">
-    <p>Wähle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. EXE erzeugt eine echte Windows-Datei und signiert sie automatisch, sobald dein Authenticode-Zertifikat eingerichtet ist. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
+    <p>WÃ¤hle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. EXE erzeugt eine echte Windows-Datei und signiert sie automatisch, sobald dein Authenticode-Zertifikat eingerichtet ist. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
     <label><input type="checkbox" value="web" checked> Web Software</label>
     <label><input type="checkbox" value="codex" checked> Send to Codex package</label>
     <label><input type="checkbox" value="cursor" checked> Send to Cursor package</label>
@@ -978,14 +991,14 @@ async function exportCurrentProject(product) {
   if (!(await requireAdminAccess("Projekt-Export"))) return;
   const checked = [...document.querySelectorAll(".export-hub input:checked")].map((input) => input.value);
   const result = document.querySelector("#exportResult");
-  result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der Realität wackeln.</p>";
+  result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der RealitÃ¤t wackeln.</p>";
   if (!api.available) {
     result.innerHTML = "<p>Backend ist nicht online. Starte <code>node server.js</code>, dann kann Rick-C63 ZIPs bauen.</p>";
     return;
   }
   const response = await apiPost("/api/export/project", { product, formats: checked });
   if (!response?.ok) {
-    result.innerHTML = "<p>Export fehlgeschlagen. Backend prüfen.</p>";
+    result.innerHTML = "<p>Export fehlgeschlagen. Backend prÃ¼fen.</p>";
     return;
   }
   result.innerHTML = `<div class="builder-output">
@@ -1235,7 +1248,7 @@ async function planWithRick(prompt) {
 
 function createPlanningUpdate(prompt, blueprint, report) {
   const lowered = prompt.toLowerCase();
-  const appNameMatch = prompt.match(/(?:name|nenn|heisst|heißen|app soll)\s*:?\s*([A-ZÄÖÜa-zäöü0-9 -]{3,40})/i);
+  const appNameMatch = prompt.match(/(?:name|nenn|heisst|heiÃŸen|app soll)\s*:?\s*([A-ZÃ„Ã–Ãœa-zÃ¤Ã¶Ã¼0-9 -]{3,40})/i);
   const focus = inferPlanningFocus(lowered);
   const baseFeature = focus.feature;
   return {
@@ -1295,7 +1308,7 @@ function applyPlanningUpdate(update, blueprint) {
 }
 
 function formatPlanningAnswer(update, blueprint) {
-  return `${rickVoiceLine("build")}\n\nPlan Mode aktiv. Ich scanne jetzt nichts Neues, ich arbeite an deiner App: ${blueprint.project_name}.\n\n### Was ich ändern würde\n1. ${update.features[0]}\n2. ${update.features[1]}\n3. ${update.features[2]}\n\n### In den Bauplan übernommen\n- Neue Seite: ${update.pages.join(", ")}\n- Roadmap: ${update.roadmap.join(" → ")}\n\n### Nächster Schritt\nWenn dir diese Richtung gefällt: im Builder eine Rick-C63 Richtung wählen, App-Name prüfen, dann Generate Software klicken. Keine Zufalls-App. Wir bauen bewusst.`;
+  return `${rickVoiceLine("build")}\n\nPlan Mode aktiv. Ich scanne jetzt nichts Neues, ich arbeite an deiner App: ${blueprint.project_name}.\n\n### Was ich Ã¤ndern wÃ¼rde\n1. ${update.features[0]}\n2. ${update.features[1]}\n3. ${update.features[2]}\n\n### In den Bauplan Ã¼bernommen\n- Neue Seite: ${update.pages.join(", ")}\n- Roadmap: ${update.roadmap.join(" â†’ ")}\n\n### NÃ¤chster Schritt\nWenn dir diese Richtung gefÃ¤llt: im Builder eine Rick-C63 Richtung wÃ¤hlen, App-Name prÃ¼fen, dann Generate Software klicken. Keine Zufalls-App. Wir bauen bewusst.`;
 }
 
 function uniqueList(items) {
@@ -1345,7 +1358,7 @@ ${report.do_not_copy.map((item) => `- ${item}`).join("\n")}
 ### 4. The legal core
 Use the public idea mechanics: ${report.legal_inspiration_points.join(", ")}. Do not copy the costume; rebuild the engine with original code, original names and original interface decisions.
 
-### 5. The Nemesis upgrade
+### 5. The Erleuchtung upgrade
 ${report.nemesis_upgrade_idea}
 
 ### 6. MVP version
@@ -1411,11 +1424,11 @@ function renderContext() {
   const trainingJob = getCurrentTrainingJob();
   const memories = (state.memories || []).slice(0, 5);
   els.contextPanel.innerHTML = `
-    <div class="mini-card"><h3>User</h3><p>${state.user.name} · ${state.user.plan}</p></div>
-    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} · Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} · ${api.health?.ollama?.model || "qwen3-coder:30b"}</p></div>
+    <div class="mini-card"><h3>User</h3><p>${state.user.name} Â· ${state.user.plan}</p></div>
+    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} Â· Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} Â· ${api.health?.ollama?.model || "qwen3-coder:30b"}</p></div>
     <div class="mini-card"><h3>Current Target</h3><p>${target ? target.title : "No target selected"}</p></div>
     <div class="mini-card"><h3>Current Report</h3><p>${report ? report.summary : "No report yet"}</p></div>
-    <div class="mini-card"><h3>Training Job</h3><p>${trainingJob ? `${trainingJob.topic} · ${trainingJob.status}` : "No training job selected"}</p></div>
+    <div class="mini-card"><h3>Training Job</h3><p>${trainingJob ? `${trainingJob.topic} Â· ${trainingJob.status}` : "No training job selected"}</p></div>
     <div class="mini-card"><h3>Rick-C63 Memories</h3><p>${memories.length ? memories.map((memory) => memory.text).join("<br>") : "No memories yet"}</p></div>
     <div class="mini-card"><h3>Data Model</h3><p>${Object.keys(schema).join(", ")}</p></div>
   `;
@@ -1429,16 +1442,16 @@ function renderPlanningBoard() {
   if (state.chatMode === "scan") {
     els.planningBoard.innerHTML = `<div class="planning-hint scan">
       <strong>Scan Mode</strong>
-      <span>Für neue URLs, Screenshots oder frische Ideen. Danach wechselst du in Plan Mode.</span>
+      <span>FÃ¼r neue URLs, Screenshots oder frische Ideen. Danach wechselst du in Plan Mode.</span>
     </div>`;
     return;
   }
   els.planningBoard.innerHTML = `<div class="planning-hint">
       <strong>${blueprint ? blueprint.project_name : "No active project"}</strong>
-      <span>${blueprint ? "Sag Rick, was geändert, erweitert oder verbessert werden soll." : "Scan zuerst eine Idee oder URL."}</span>
+      <span>${blueprint ? "Sag Rick, was geÃ¤ndert, erweitert oder verbessert werden soll." : "Scan zuerst eine Idee oder URL."}</span>
     </div>
     <div class="quick-prompts">
-      ${["Mach das Design klarer und edler", "Füge 3 starke Features hinzu", "Plane Login und Projekt-Speicher", "Verbessere Export zu Codex/Cursor"].map((prompt) => `<button data-quick-prompt="${prompt}">${prompt}</button>`).join("")}
+      ${["Mach das Design klarer und edler", "FÃ¼ge 3 starke Features hinzu", "Plane Login und Projekt-Speicher", "Verbessere Export zu Codex/Cursor"].map((prompt) => `<button data-quick-prompt="${prompt}">${prompt}</button>`).join("")}
     </div>
     <div class="plan-notes">
       ${notes.length ? notes.map((note) => `<div><strong>${note.focus}</strong><span>${note.prompt}</span></div>`).join("") : "<p>Noch keine Planungsnotizen.</p>"}
@@ -1458,7 +1471,7 @@ function setChatModeVisualOnly() {
   if (els.chatInput) {
     els.chatInput.placeholder = state.chatMode === "scan"
       ? "Scan Mode: URL, Screenshot-Idee oder neue App eingeben..."
-      : "Plan Mode: Sag Rick, was wir an der aktuellen App ändern oder erweitern sollen...";
+      : "Plan Mode: Sag Rick, was wir an der aktuellen App Ã¤ndern oder erweitern sollen...";
   }
 }
 
@@ -1519,7 +1532,7 @@ function renderProjectFlow() {
     ["3", "Edit Bauplan", Boolean(getCurrentBlueprint() && (state.blueprintVersions || []).length)],
     ["4", "Generate", built],
     ["5", "Preview / Export", built],
-    ["6", "Nemesis Group", Boolean(project)]
+    ["6", "Erleuchtung Group", Boolean(project)]
   ];
   els.projectFlow.innerHTML = steps.map(([number, label, done], index) => `
     <div class="flow-step ${done ? "done" : ""} ${!done && steps.slice(0, index).every((step) => step[2]) ? "next" : ""}">
@@ -1559,7 +1572,7 @@ function renderRickSuggestions() {
       }
       saveState();
       renderAll();
-      toast("Rick-C63 Vorschlag gewählt.");
+      toast("Rick-C63 Vorschlag gewÃ¤hlt.");
     });
   });
 }
@@ -1598,7 +1611,7 @@ function renderBlueprintEditor() {
   els.blueprintEditor.innerHTML = `
     <div class="section-heading">
       <span>Rick-C63 Blueprint Workshop</span>
-      <small>Bearbeite den Software-Bauplan direkt oder ändere ihn im Planning Studio zusammen mit Rick.</small>
+      <small>Bearbeite den Software-Bauplan direkt oder Ã¤ndere ihn im Planning Studio zusammen mit Rick.</small>
     </div>
     <div class="blueprint-editor-grid">
       <label>App name<input id="workshopName" value="${escapeHtml(blueprint.project_name)}"></label>
@@ -1694,7 +1707,7 @@ function renderTraining() {
   const active = current
     ? `<div class="training-active">
         <strong>${escapeHtml(current.topic)}</strong>
-        <span>${escapeHtml(current.phase || "ready")} · ${escapeHtml(current.status || "queued")} · ${current.stats?.sources || 0} sources · ${current.stats?.examples || 0} examples</span>
+        <span>${escapeHtml(current.phase || "ready")} Â· ${escapeHtml(current.status || "queued")} Â· ${current.stats?.sources || 0} sources Â· ${current.stats?.examples || 0} examples</span>
         <small>${current.package?.url ? `Package: ${current.package.url}` : "No package exported yet."}</small>
         <small>${current.hf?.job_url ? `HF job: ${current.hf.job_url}` : "HF job not launched yet."}</small>
       </div>`
@@ -1972,7 +1985,7 @@ function saveProductPackage(product, blueprint, report) {
   if (!project) return;
   project.product_package = product;
   project.status = "Building";
-  project.next_step = "Connect this product package to one of your Nemesis pages.";
+  project.next_step = "Connect this product package to one of your Erleuchtung pages.";
   project.updated_at = new Date().toISOString();
   remember(`Saved product package: ${product.name}`);
   saveState();
@@ -2035,7 +2048,7 @@ function addChatMessage(role, text) {
       id: id("session"),
       user_id: state.user.id,
       agent_name: "Rick-C63",
-      title: "The Mad Genius Architect of Nemesis Droidijana",
+      title: "The Mad Genius Architect of Erleuchtung",
       messages: [],
       created_at: now,
       updated_at: now
@@ -2053,7 +2066,7 @@ function greetRick() {
     renderChat();
     return;
   }
-  addChatMessage("agent", "Alright Elija, Rick-C63 online. We do not copy the shell. We extract the legal engine, upgrade the workflow, and turn it into your own Nemesis system.\n\nSend me a URL, screenshot, brand, product page or idea. I will give you the legal version, MVP version, empire version and next 3 smart moves.");
+  addChatMessage("agent", "Alright Elija, Rick-C63 online. We do not copy the shell. We extract the legal engine, upgrade the workflow, and turn it into your own Erleuchtung system.\n\nSend me a URL, screenshot, brand, product page or idea. I will give you the legal version, MVP version, empire version and next 3 smart moves.");
 }
 
 function renderChat() {
@@ -2081,7 +2094,7 @@ function fullReportCard(report) {
     <div class="tag-row"><span class="tag">${target?.input_type || "Target"}</span><span class="status-badge">${target?.status || "Analyzed"}</span></div>
     <h3>${target?.title || "Analysis Report"}</h3>
     <p>${report.summary}</p>
-    ${reportSection("Detected category", [target?.category || "Full Nemesis Upgrade"])}
+    ${reportSection("Detected category", [target?.category || "Full Erleuchtung Upgrade"])}
     ${reportSection("Main purpose", [report.purpose])}
     ${reportSection("Target audience", [report.target_audience])}
     ${reportSection("Visible features", report.visible_features)}
@@ -2170,15 +2183,15 @@ function seedIfEmpty() {
   const target = createTarget({
     text: "A premium app that turns public URLs, screenshots, brands and business ideas into legal upgraded blueprints.",
     inputType: "Text description of an app/business idea",
-    analysisType: "Full Nemesis Upgrade"
+    analysisType: "Full Erleuchtung Upgrade"
   });
-  const report = createAnalysisReport(target, "Full Nemesis Upgrade");
+  const report = createAnalysisReport(target, "Full Erleuchtung Upgrade");
   createBlueprintFromReport(report);
 }
 
 function loadState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    const saved = migrateState(JSON.parse(localStorage.getItem(STORAGE_KEY)) || {});
     return {
       ...structuredClone(defaultState),
       ...saved,
@@ -2193,7 +2206,32 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(migrateState(state)));
+}
+
+function migrateState(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => migrateState(item));
+  }
+  if (!value || typeof value !== "object") {
+    return typeof value === "string" ? rewriteBrandText(value) : value;
+  }
+  const migrated = {};
+  for (const [key, item] of Object.entries(value)) {
+    migrated[key] = migrateState(item);
+  }
+  return migrated;
+}
+
+function rewriteBrandText(value) {
+  if (typeof value !== "string") return value;
+  return value
+    .replaceAll(/Nemesis Droidijana -63/gi, BRAND.fullName)
+    .replaceAll(/Nemesis Droidijana/gi, BRAND.shortName)
+    .replaceAll(/Nemesis/gi, BRAND.shortName)
+    .replaceAll(/Nox/gi, BRAND.crewName)
+    .replaceAll(/nox/gi, BRAND.crewName)
+    .replaceAll(/Virus/gi, BRAND.shortName);
 }
 
 function refreshCurrentSession() {
@@ -2207,11 +2245,19 @@ function refreshCurrentSession() {
 }
 
 function clearInputs() {
+  revokePreviewObjectUrl();
   els.targetUrl.value = "";
   els.targetText.value = "";
   els.targetFile.value = "";
   els.previewArea.innerHTML = "";
   els.previewArea.classList.add("hidden");
+}
+
+function revokePreviewObjectUrl() {
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = "";
+  }
 }
 
 function guessTitle(url, text, fallback) {
@@ -2261,6 +2307,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function safe(value) {
+  return escapeHtml(String(value ?? ""));
 }
 
 function id(prefix) {

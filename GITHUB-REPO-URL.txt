@@ -1,0 +1,7 @@
+GitHub repository URL:
+https://github.com/Skankhunt420hash/Rick-C63AndDianeC1-System
+
+Notes:
+- GitHub URLs always include `github.com`.
+- The authenticated account seen here is `Skankhunt420hash`.
+- GitHub usernames are case-insensitive, so `skankhunt42hash` may just be a typo in the chat.

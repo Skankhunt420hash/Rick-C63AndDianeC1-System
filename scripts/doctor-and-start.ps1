@@ -27,10 +27,10 @@ try {
       Start-Sleep -Seconds 1
     }
   }
-  throw "Nemesis backend did not become ready."
+  throw "Erleuchtung backend did not become ready."
 } catch {
   $_ | Out-String | Add-Content -LiteralPath $log
   Add-Type -AssemblyName PresentationFramework
-  [System.Windows.MessageBox]::Show("Nemesis could not start. Open data\doctor-start.log for details.", "Nemesis Self-Healing Doctor") | Out-Null
+  [System.Windows.MessageBox]::Show("Erleuchtung could not start. Open data\doctor-start.log for details.", "Erleuchtung Self-Healing Doctor") | Out-Null
   exit 1
 }

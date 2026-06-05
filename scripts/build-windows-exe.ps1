@@ -13,7 +13,7 @@ $resolvedSource = (Resolve-Path -LiteralPath $SourceDir).Path
 $fullOutput = [System.IO.Path]::GetFullPath($OutputDir)
 
 if (-not $resolvedSource.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
-  throw "Source directory must stay inside the Nemesis workspace."
+  throw "Source directory must stay inside the Erleuchtung workspace."
 }
 if (-not $fullOutput.StartsWith($exports, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "Windows output directory must stay inside the exports directory."
@@ -27,7 +27,7 @@ $softwareDir = Join-Path $fullOutput "software"
 Copy-Item -LiteralPath $resolvedSource -Destination $softwareDir -Recurse
 
 $escapedAppName = $AppName.Replace('"', '\"')
-$launcherSource = Join-Path $fullOutput "NemesisLauncher.cs"
+$launcherSource = Join-Path $fullOutput "ErleuchtungLauncher.cs"
 $exePath = Join-Path $fullOutput "$Slug.exe"
 
 @"
@@ -36,7 +36,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
-internal static class NemesisLauncher
+internal static class ErleuchtungLauncher
 {
     [STAThread]
     private static void Main()
