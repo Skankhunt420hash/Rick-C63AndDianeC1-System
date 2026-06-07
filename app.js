@@ -41,7 +41,8 @@ const schema = {
   analysisReport: ["id", "target_id", "summary", "purpose", "target_audience", "visible_features", "design_style", "business_model", "strengths", "weaknesses", "legal_risks", "do_not_copy", "legal_inspiration_points", "upgrade_opportunities", "nemesis_upgrade_idea", "suggested_names", "mvp_plan", "empire_plan", "tech_stack", "monetization", "created_at", "updated_at"],
   blueprint: ["id", "user_id", "report_id", "project_name", "tagline", "problem", "target_user", "features", "premium_features", "frontend_pages", "backend_services", "database_schema", "api_routes", "auth_requirements", "file_upload_requirements", "ai_requirements", "admin_requirements", "roadmap", "test_plan", "deployment_plan", "created_at", "updated_at"],
   empireProject: ["id", "user_id", "blueprint_id", "name", "description", "status", "priority", "difficulty_score", "monetization_score", "legal_safety_score", "next_step", "created_at", "updated_at"],
-  trainingJob: ["id", "topic", "objective", "base_model", "seed_urls", "allowed_domains", "discovery_queries", "max_pages", "max_depth", "output_format", "dataset_style", "auto_discover", "hf_namespace", "hf_flavor", "hf_timeout", "hf_private_dataset", "hf_private_model", "launch_on_hf", "status", "phase", "progress", "stats", "package", "sources", "examples", "logs", "hf", "last_error", "created_at", "updated_at", "started_at", "finished_at"]
+  trainingJob: ["id", "topic", "objective", "base_model", "seed_urls", "allowed_domains", "discovery_queries", "max_pages", "max_depth", "output_format", "dataset_style", "auto_discover", "hf_namespace", "hf_flavor", "hf_timeout", "hf_private_dataset", "hf_private_model", "launch_on_hf", "status", "phase", "progress", "stats", "package", "sources", "examples", "logs", "hf", "last_error", "created_at", "updated_at", "started_at", "finished_at"],
+  codingWorkspace: ["id", "project_id", "name", "slug", "adapter", "adapter_status", "status", "last_run_id", "created_at", "updated_at"]
 };
 
 const defaultState = {
@@ -59,6 +60,7 @@ const defaultState = {
   blueprints: [],
   empireProjects: [],
   trainingJobs: [],
+  workspaces: [],
   memories: [],
   chatMode: "plan",
   planningNotes: [],
@@ -66,6 +68,8 @@ const defaultState = {
   currentReportId: null,
   currentBlueprintId: null,
   currentTrainingJobId: null,
+  currentWorkspaceId: null,
+  currentWorkspaceFile: "",
   projectAudit: null,
   builderTarget: "web-app",
   adminSecurity: {
@@ -136,6 +140,18 @@ function cacheElements() {
     trainingStatus: document.querySelector("#trainingStatus"),
     trainingJobs: document.querySelector("#trainingJobs"),
     trainingRefreshButton: document.querySelector("#trainingRefreshButton"),
+    workspaceCreateForm: document.querySelector("#workspaceCreateForm"),
+    workspaceName: document.querySelector("#workspaceName"),
+    workspaceProject: document.querySelector("#workspaceProject"),
+    workspaceAdapter: document.querySelector("#workspaceAdapter"),
+    workspaceList: document.querySelector("#workspaceList"),
+    workspaceOverview: document.querySelector("#workspaceOverview"),
+    workspaceTree: document.querySelector("#workspaceTree"),
+    workspaceFileLabel: document.querySelector("#workspaceFileLabel"),
+    workspaceEditor: document.querySelector("#workspaceEditor"),
+    workspaceSaveFile: document.querySelector("#workspaceSaveFile"),
+    workspaceRuns: document.querySelector("#workspaceRuns"),
+    workspaceActivity: document.querySelector("#workspaceActivity"),
     auditHero: document.querySelector("#auditHero"),
     auditStats: document.querySelector("#auditStats"),
     auditFindings: document.querySelector("#auditFindings"),
@@ -195,6 +211,11 @@ function wireEvents() {
     toast("Blueprint saved to local Erleuchtung project memory.");
   });
   els.trainingForm?.addEventListener("submit", handleTrainingSubmit);
+  els.workspaceCreateForm?.addEventListener("submit", createCodingWorkspace);
+  els.workspaceSaveFile?.addEventListener("click", saveWorkspaceFile);
+  document.querySelectorAll("[data-workspace-command]").forEach((button) => {
+    button.addEventListener("click", () => runWorkspaceLoop(button.dataset.workspaceCommand));
+  });
   els.trainingRefreshButton?.addEventListener("click", () => {
     renderTraining();
     toast("Training jobs refreshed.");
@@ -1117,10 +1138,12 @@ async function initializeBackend() {
       state.blueprintVersions = sync.db.blueprintVersions || state.blueprintVersions;
       state.empireProjects = sync.db.projects || state.empireProjects;
       state.trainingJobs = sync.db.trainingJobs || state.trainingJobs;
+      state.workspaces = sync.db.workspaces || state.workspaces;
       state.memories = sync.db.memories || state.memories;
       state.sessions = sync.db.sessions || state.sessions;
       saveState();
     }
+    await refreshWorkspaces();
     toast(health.ollama?.reachable ? "Backend online. Ollama/Rick-C63 ist verbunden." : "Backend online. Ollama ist noch offline, Fallback aktiv.");
   }
   renderAll();
@@ -1181,6 +1204,7 @@ function buildProjectAudit(health, doctor) {
           "npm run check validates JavaScript syntax plus navigation, analysis, XSS safety, Audit and API hardening.",
           "Core pages exist: Home, Rick-C63, Reports, Builder, Empire, Training, Legal and Audit.",
           "Backend routes already cover health, doctor, chat, DB sync, products, exports and training jobs.",
+          "Coding workspaces provide contained file editing and allowlisted syntax, check, test and build-inspect loops.",
           "Sensitive repository files and admin authentication data are not exposed by public routes.",
           "Node, Ollama and llama.cpp bind to localhost by default.",
           ...repairs
@@ -1198,7 +1222,8 @@ function buildProjectAudit(health, doctor) {
           "Replace demo analysis with a stronger local model pipeline once Ollama is consistently available.",
           "Add repo-level project roadmap and issue backlog so every feature has a finish line.",
           "Add backup/export controls for data/erleuchtung-db.json.",
-          "Add dedicated integration tests for Training and native EXE export on a fully provisioned machine."
+          "Add dedicated integration tests for Training and native EXE export on a fully provisioned machine.",
+          "Provision external SDKs before claiming desktop, native mobile, Godot or VR compilation."
         ]
       }
     ],
@@ -1520,6 +1545,7 @@ function renderAll() {
   renderDevelopmentTasks();
   renderEmpire();
   renderTraining();
+  renderWorkspaces();
   renderAudit();
 }
 
@@ -1672,7 +1698,7 @@ function renderWorkflowCommandDeck() {
     { number: "02", label: "Extract", detail: "Legal mechanisms and strengths", route: "reports", done: Boolean(getCurrentReport()) },
     { number: "03", label: "Blueprint", detail: "Pages, features, data and APIs", route: "blueprint", done: Boolean(getCurrentBlueprint()) },
     { number: "04", label: "Plan with Rick", detail: "Iterate and save blueprint versions", route: "chat", done: Boolean((state.blueprintVersions || []).length) },
-    { number: "05", label: "Build", detail: "Generate the selected delivery target", route: "blueprint", done: Boolean(project?.product_package?.build) },
+    { number: "05", label: "Build", detail: "Open a real coding workspace and verify it", route: "workspace", done: Boolean(state.workspaces?.length) },
     { number: "06", label: "Export", detail: "Preview, package and continue", route: "empire", done: Boolean(project?.product_package) }
   ];
   els.workflowCommandDeck.innerHTML = steps.map((step) => `
@@ -2342,6 +2368,147 @@ function fullReportCard(report) {
   </article>`;
 }
 
+async function refreshWorkspaces(selectId = "") {
+  if (!api.available) return;
+  const response = await apiGet("/api/workspaces");
+  if (!response?.items) return;
+  state.workspaces = response.items;
+  if (selectId) state.currentWorkspaceId = selectId;
+  if (!state.currentWorkspaceId && state.workspaces[0]) state.currentWorkspaceId = state.workspaces[0].id;
+  saveState();
+  await loadCurrentWorkspace();
+}
+
+async function loadCurrentWorkspace() {
+  const workspace = getCurrentWorkspace();
+  if (!workspace || !api.available) {
+    renderWorkspaces();
+    return;
+  }
+  const detail = await apiGet(`/api/workspaces/${encodeURIComponent(workspace.id)}`);
+  if (detail?.workspace) {
+    state.workspaces = state.workspaces.map((item) => item.id === detail.workspace.id ? { ...item, ...detail.workspace, tree: detail.tree || [], runs: detail.runs || [] } : item);
+  }
+  renderWorkspaces();
+}
+
+async function createCodingWorkspace(event) {
+  event.preventDefault();
+  if (!(await requireAdminAccess("Workspace erstellen"))) return;
+  const name = els.workspaceName.value.trim() || getCurrentBlueprint()?.project_name || "New Coding Workspace";
+  const response = await apiPost("/api/workspaces", {
+    name,
+    project_id: els.workspaceProject.value,
+    adapter: els.workspaceAdapter.value
+  });
+  if (!response?.workspace) {
+    toast("Workspace konnte nicht erstellt werden.");
+    return;
+  }
+  els.workspaceName.value = "";
+  await refreshWorkspaces(response.workspace.id);
+  routeTo("workspace");
+  toast("Secure coding workspace created.");
+}
+
+function getCurrentWorkspace() {
+  return state.workspaces?.find((item) => item.id === state.currentWorkspaceId) || state.workspaces?.[0] || null;
+}
+
+function renderWorkspaces() {
+  if (!els.workspaceList) return;
+  const workspaces = state.workspaces || [];
+  const current = getCurrentWorkspace();
+  els.workspaceProject.innerHTML = `<option value="">No linked Empire project</option>${state.empireProjects.map((project) => `<option value="${safe(project.id)}">${safe(project.name)}</option>`).join("")}`;
+  els.workspaceList.innerHTML = workspaces.length ? workspaces.map((workspace) => `
+    <button class="mini-card workspace-select ${workspace.id === current?.id ? "selected" : ""}" data-workspace-id="${safe(workspace.id)}">
+      <strong>${safe(workspace.name)}</strong>
+      <span>${safe(workspace.adapter_label || workspace.adapter)} / ${safe(workspace.status)}</span>
+      <small>${workspace.run_count || workspace.runs?.length || 0} runs</small>
+    </button>`).join("") : emptyState("No coding workspace yet. Create one from a blueprint or Empire project.");
+  els.workspaceList.querySelectorAll("[data-workspace-id]").forEach((button) => button.addEventListener("click", async () => {
+    state.currentWorkspaceId = button.dataset.workspaceId;
+    state.currentWorkspaceFile = "";
+    await loadCurrentWorkspace();
+  }));
+
+  if (!current) {
+    els.workspaceOverview.innerHTML = emptyState("Create a workspace to turn the blueprint into editable local project files.");
+    els.workspaceTree.innerHTML = "";
+    els.workspaceRuns.innerHTML = "";
+    els.workspaceActivity.innerHTML = "";
+    els.workspaceEditor.value = "";
+    return;
+  }
+  els.workspaceOverview.innerHTML = `
+    <div><span class="status-badge ${current.status === "verified" ? "complete" : "running"}">${safe(current.status)}</span>
+    <h3>${safe(current.name)}</h3><p>${safe(current.adapter_label || current.adapter)} / ${safe(current.adapter_status)}</p></div>
+    <div class="workspace-capabilities"><strong>Capabilities</strong>${list(current.capabilities || [])}<strong>Limits</strong>${list(current.limits || [])}</div>`;
+  const tree = current.tree || [];
+  els.workspaceTree.innerHTML = tree.length ? tree.map((item) => item.type === "directory"
+    ? `<div class="workspace-directory">${safe(item.path)}/</div>`
+    : `<button data-workspace-file="${safe(item.path)}" ${item.editable ? "" : "disabled"}>${safe(item.path)} <small>${item.size} B</small></button>`).join("")
+    : "<p class=\"muted\">Load the workspace to inspect its files.</p>";
+  els.workspaceTree.querySelectorAll("[data-workspace-file]").forEach((button) => button.addEventListener("click", () => openWorkspaceFile(button.dataset.workspaceFile)));
+  els.workspaceRuns.innerHTML = (current.runs || []).length ? current.runs.map((run) => `
+    <article class="workspace-run ${safe(run.status)}">
+      <div><strong>${safe(run.command)}</strong><span class="status-badge ${run.status === "passed" ? "complete" : "failed"}">${safe(run.status)}</span><small>${run.duration_ms} ms</small></div>
+      <pre>${safe(run.output || "No output")}</pre>
+    </article>`).join("") : "<p class=\"muted\">No build or test runs yet.</p>";
+  els.workspaceActivity.innerHTML = (current.activity || []).length ? current.activity.slice(0, 8).map((item) => `
+    <div class="workspace-activity-item"><strong>${safe(item.type)}</strong><span>${safe(item.detail)}</span><small>${safe(new Date(item.created_at).toLocaleString())}</small></div>
+  `).join("") : "<p class=\"muted\">No workspace activity yet.</p>";
+}
+
+async function openWorkspaceFile(path) {
+  const workspace = getCurrentWorkspace();
+  if (!workspace) return;
+  const response = await apiGet(`/api/workspaces/${encodeURIComponent(workspace.id)}/file?path=${encodeURIComponent(path)}`);
+  if (!response?.ok) {
+    toast("File could not be opened.");
+    return;
+  }
+  state.currentWorkspaceFile = response.path;
+  els.workspaceFileLabel.textContent = response.path;
+  els.workspaceEditor.value = response.content;
+}
+
+async function saveWorkspaceFile() {
+  const workspace = getCurrentWorkspace();
+  if (!workspace || !state.currentWorkspaceFile) {
+    toast("Select an editable workspace file first.");
+    return;
+  }
+  if (!(await requireAdminAccess("Workspace-Datei speichern"))) return;
+  const response = await apiPost(`/api/workspaces/${encodeURIComponent(workspace.id)}/file`, {
+    path: state.currentWorkspaceFile,
+    content: els.workspaceEditor.value
+  });
+  if (!response?.ok) {
+    toast("File save failed.");
+    return;
+  }
+  await loadCurrentWorkspace();
+  toast(`${state.currentWorkspaceFile} saved.`);
+}
+
+async function runWorkspaceLoop(command) {
+  const workspace = getCurrentWorkspace();
+  if (!workspace) {
+    toast("Create or select a workspace first.");
+    return;
+  }
+  if (!(await requireAdminAccess(`Workspace ${command}`))) return;
+  toast(`Running allowlisted ${command} command...`);
+  const response = await apiPost(`/api/workspaces/${encodeURIComponent(workspace.id)}/run`, { command });
+  if (!response?.run) {
+    toast("Workspace command failed to start.");
+    return;
+  }
+  await refreshWorkspaces(workspace.id);
+  toast(`${command}: ${response.run.status} in ${response.run.duration_ms} ms.`);
+}
+
 function miniReportCard(report) {
   const target = state.targets.find((item) => item.id === report.target_id);
   return `<div class="mini-card"><h3>${safe(target?.title || "Analysis")}</h3><p>${safe(report.summary)}</p><div class="tag-row"><span class="tag">${safe(target?.category || "Analysis")}</span></div><button class="secondary-button full-width" data-open-report="${safe(report.id)}">Open Report</button></div>`;
@@ -2429,6 +2596,7 @@ function loadState() {
       memories: saved.memories || [],
       blueprintVersions: saved.blueprintVersions || [],
       trainingJobs: saved.trainingJobs || [],
+      workspaces: saved.workspaces || [],
       currentTrainingJobId: saved.currentTrainingJobId || null,
       projectAudit: saved.projectAudit || null
     };

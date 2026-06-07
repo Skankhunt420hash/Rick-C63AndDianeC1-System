@@ -12,6 +12,7 @@ let browser;
 let dbSnapshot = null;
 const pageErrors = [];
 const generatedDirs = [];
+const workspaceDirs = [];
 
 try {
   dbSnapshot = await readFile(DB_PATH, "utf8").catch(() => null);
@@ -36,7 +37,7 @@ try {
   if (await page.locator(".workflow-command-card").count() !== 6) {
     throw new Error("Empire Production Line does not contain all six workflow steps.");
   }
-  for (const route of ["chat", "reports", "blueprint", "empire", "training", "audit", "legal", "home"]) {
+  for (const route of ["chat", "reports", "blueprint", "workspace", "empire", "training", "audit", "legal", "home"]) {
     await page.locator(`.top-nav [data-route="${route}"]`).click();
     await page.waitForURL(`**/#${route}`);
   }
@@ -93,10 +94,11 @@ try {
   }
 
   await assertApiHardening();
-  await assertGeneratedBuilder(browser);
+  const adminToken = await assertGeneratedBuilder(browser);
+  await assertWorkspaceFactory(page, adminToken);
   if (pageErrors.length) throw new Error(`Browser page errors: ${pageErrors.join(" | ")}`);
 
-  console.log("Smoke test passed: production line, delivery targets, generated app, navigation, analysis, XSS safety, audit and hardened APIs are working.");
+  console.log("Smoke test passed: production line, workspace factory, engine scaffolds, generated app, navigation, XSS safety, audit and hardened APIs are working.");
 } finally {
   if (browser) await browser.close();
   if (server) {
@@ -104,12 +106,13 @@ try {
     await new Promise((resolve) => server.once("exit", resolve));
   }
   for (const dir of generatedDirs) await rm(dir, { recursive: true, force: true });
+  for (const dir of workspaceDirs) await rm(dir, { recursive: true, force: true });
   if (dbSnapshot !== null) await writeFile(DB_PATH, dbSnapshot, "utf8");
 }
 
 async function assertGeneratedBuilder(activeBrowser) {
   const status = await fetch(`${BASE_URL}/api/admin/status`).then((response) => response.json());
-  if (status.configured) return;
+  if (status.configured) return null;
 
   const password = "smoke-release-password";
   const setup = await fetch(`${BASE_URL}/api/admin/set-password`, {
@@ -157,6 +160,87 @@ async function assertGeneratedBuilder(activeBrowser) {
     throw new Error("Generated app executed a saved note as HTML.");
   }
   await generatedPage.close();
+  return login.token;
+}
+
+async function assertWorkspaceFactory(page, adminToken) {
+  const unauthorized = await fetch(`${BASE_URL}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Unauthorized Workspace", adapter: "web-pwa" })
+  });
+  if (unauthorized.status !== 403) throw new Error(`Unauthorized workspace creation returned ${unauthorized.status}, expected 403.`);
+  if (!adminToken) return;
+
+  const create = await fetch(`${BASE_URL}/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": adminToken },
+    body: JSON.stringify({ name: "Smoke Workspace", adapter: "web-pwa" })
+  }).then((response) => response.json());
+  if (!create.workspace?.id || !create.workspace?.slug) throw new Error(`Workspace creation failed: ${JSON.stringify(create)}`);
+  workspaceDirs.push(join(process.cwd(), "generated", "workspaces", create.workspace.slug));
+  const workspaceId = create.workspace.id;
+
+  const detail = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}`).then((response) => response.json());
+  if (!detail.tree?.some((item) => item.path === "src/app.js")) throw new Error("Workspace file tree is missing src/app.js.");
+
+  const file = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file?path=${encodeURIComponent("src/app.js")}`).then((response) => response.json());
+  if (!file.content?.includes("workspaceStatus")) throw new Error("Workspace file read did not return starter content.");
+
+  const write = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": adminToken },
+    body: JSON.stringify({ path: "src/app.js", content: file.content.replace("ready: true", "ready: true") })
+  });
+  if (!write.ok) throw new Error(`Workspace file write failed: ${write.status}`);
+
+  for (const command of ["syntax", "check", "test", "build-inspect"]) {
+    const response = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": adminToken },
+      body: JSON.stringify({ command })
+    }).then((result) => result.json());
+    if (response.run?.status !== "passed") throw new Error(`Workspace ${command} did not pass: ${JSON.stringify(response)}`);
+  }
+
+  const arbitrary = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": adminToken },
+    body: JSON.stringify({ command: "powershell -Command whoami" })
+  });
+  if (arbitrary.status !== 400) throw new Error(`Arbitrary workspace command returned ${arbitrary.status}, expected 400.`);
+
+  for (const path of ["../server.js", ".env", "secrets/token.txt"]) {
+    const response = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`);
+    if (![400, 403].includes(response.status)) throw new Error(`Unsafe workspace path ${path} returned ${response.status}.`);
+  }
+
+  const adapterFiles = {
+    desktop: "adapters/desktop.md",
+    "native-mobile": "adapters/mobile.md",
+    godot: "godot/project.godot",
+    vr: "adapters/vr.md"
+  };
+  for (const [adapter, expectedFile] of Object.entries(adapterFiles)) {
+    const adapterWorkspace = await fetch(`${BASE_URL}/api/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": adminToken },
+      body: JSON.stringify({ name: `Smoke ${adapter}`, adapter })
+    }).then((response) => response.json());
+    workspaceDirs.push(join(process.cwd(), "generated", "workspaces", adapterWorkspace.workspace.slug));
+    const adapterDetail = await fetch(`${BASE_URL}/api/workspaces/${adapterWorkspace.workspace.id}`).then((response) => response.json());
+    if (!adapterDetail.tree?.some((item) => item.path === expectedFile)) throw new Error(`${adapter} adapter is missing ${expectedFile}.`);
+    if (!adapterDetail.workspace?.limits?.length || adapterDetail.workspace.adapter_status === "starter-ready") {
+      throw new Error(`${adapter} adapter did not report its honest scaffold limits.`);
+    }
+  }
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.locator('.top-nav [data-route="workspace"]').click();
+  await page.getByRole("heading", { name: "Coding Workspace" }).waitFor();
+  await page.getByRole("button", { name: /Smoke Workspace Web \/ PWA/ }).click();
+  await page.getByRole("heading", { name: "Smoke Workspace", exact: true }).waitFor();
+  await page.getByText("Web / PWA / verified", { exact: true }).waitFor();
 }
 
 async function assertApiHardening() {
@@ -198,6 +282,13 @@ async function assertApiHardening() {
     body: "{}"
   });
   if (logout.status !== 403) throw new Error(`Unauthorized logout returned ${logout.status}, expected 403.`);
+
+  const unauthorizedRun = await fetch(`${BASE_URL}/api/workspaces/not-a-workspace/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ command: "test" })
+  });
+  if (unauthorizedRun.status !== 404) throw new Error(`Unknown workspace returned ${unauthorizedRun.status}, expected 404.`);
 }
 
 async function launchBrowser() {

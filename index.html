@@ -35,6 +35,7 @@
         <button class="nav-link" data-route="chat">Rick-C63</button>
         <button class="nav-link" data-route="reports">Reports</button>
         <button class="nav-link" data-route="blueprint">Builder</button>
+        <button class="nav-link" data-route="workspace">Workspace</button>
         <button class="nav-link" data-route="empire">Empire</button>
         <button class="nav-link" data-route="training">Training</button>
         <button class="nav-link" data-route="audit">Audit</button>
@@ -229,6 +230,60 @@
             </div>
             <ol id="taskList" class="task-list"></ol>
           </aside>
+        </div>
+      </section>
+
+      <section id="workspace" class="page">
+        <div class="app-shell">
+          <div class="page-title">
+            <h2>Coding Workspace</h2>
+            <p>A controlled local software factory: edit project files, inspect honest engine adapters, and run allowlisted verification loops.</p>
+          </div>
+          <div class="workspace-layout">
+            <aside class="panel workspace-sidebar">
+              <div class="section-heading">
+                <span>Workspaces</span>
+                <small>Stored under generated/workspaces</small>
+              </div>
+              <form id="workspaceCreateForm" class="workspace-create-form">
+                <label>Name<input id="workspaceName" maxlength="100" placeholder="My product workspace"></label>
+                <label>Empire project<select id="workspaceProject"></select></label>
+                <label>Engine adapter<select id="workspaceAdapter">
+                  <option value="web-pwa">Web / PWA</option>
+                  <option value="desktop">Desktop</option>
+                  <option value="native-mobile">Native Mobile</option>
+                  <option value="godot">Godot / 3D</option>
+                  <option value="vr">VR</option>
+                </select></label>
+                <button class="primary-button full-width" type="submit">Create Secure Workspace</button>
+              </form>
+              <div id="workspaceList" class="card-list"></div>
+            </aside>
+            <section class="panel workspace-main">
+              <div id="workspaceOverview" class="workspace-overview"></div>
+              <div class="workspace-command-row">
+                <button class="secondary-button" data-workspace-command="syntax">Syntax</button>
+                <button class="secondary-button" data-workspace-command="check">Check</button>
+                <button class="secondary-button" data-workspace-command="test">Test</button>
+                <button class="secondary-button" data-workspace-command="build-inspect">Build Inspect</button>
+              </div>
+              <div class="workspace-editor-layout">
+                <div>
+                  <div class="section-heading"><span>Project Files</span><small>Safe editable files only</small></div>
+                  <div id="workspaceTree" class="workspace-tree"></div>
+                </div>
+                <div>
+                  <div class="section-heading"><span id="workspaceFileLabel">Editor</span><small>256 KB per file</small></div>
+                  <textarea id="workspaceEditor" class="workspace-editor" spellcheck="false" placeholder="Select a file to edit"></textarea>
+                  <button id="workspaceSaveFile" class="primary-button full-width" type="button">Save File</button>
+                </div>
+              </div>
+              <div class="section-heading"><span>Activity</span><small>Recent workspace changes</small></div>
+              <div id="workspaceActivity" class="workspace-activity"></div>
+              <div class="section-heading"><span>Build & Test History</span><small>Status, duration and structured output</small></div>
+              <div id="workspaceRuns" class="workspace-runs"></div>
+            </section>
+          </div>
         </div>
       </section>
 

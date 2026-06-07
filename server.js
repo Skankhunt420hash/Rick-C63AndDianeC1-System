@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
@@ -13,9 +13,13 @@ const DATA_DIR = join(ROOT, "data");
 const DB_PATH = join(DATA_DIR, "erleuchtung-db.json");
 const DOCTOR_PATH = join(DATA_DIR, "doctor-report.json");
 const GENERATED_DIR = join(ROOT, "generated-products");
+const WORKSPACES_DIR = join(ROOT, "generated", "workspaces");
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 1024 * 1024);
+const MAX_WORKSPACE_FILE_BYTES = Number(process.env.MAX_WORKSPACE_FILE_BYTES || 256 * 1024);
+const MAX_WORKSPACE_FILES = 300;
+const MAX_RUN_OUTPUT_BYTES = 128 * 1024;
 const LLAMA_URL = process.env.LLAMA_CPP_URL || "http://127.0.0.1:8080";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.RICK_C63_OLLAMA_MODEL || "qwen3-coder:30b";
@@ -50,6 +54,8 @@ const defaultDb = {
   blueprintVersions: [],
   trainingJobs: [],
   products: [],
+  workspaces: [],
+  workspaceRuns: [],
   memories: [],
   sessions: [],
   adminAuth: {
@@ -85,6 +91,85 @@ server.listen(PORT, HOST, () => {
 });
 
 async function handleApi(req, res, url) {
+  if (url.pathname === "/api/workspaces" && req.method === "GET") {
+    const db = await readDb();
+    sendJson(res, 200, { ok: true, items: (db.workspaces || []).map((item) => workspaceSummary(item, db)) });
+    return;
+  }
+
+  if (url.pathname === "/api/workspaces" && req.method === "POST") {
+    const db = await requireAdmin(req, res);
+    if (!db) return;
+    const body = await readJson(req);
+    const workspace = await createWorkspace(body, db);
+    db.workspaces.unshift(workspace);
+    await writeDb(db);
+    sendJson(res, 201, { ok: true, workspace: workspaceSummary(workspace, db) });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/workspaces/")) {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const workspaceId = parts[2] || "";
+    const action = parts[3] || "";
+    const db = await readDb();
+    const workspace = (db.workspaces || []).find((item) => item.id === workspaceId);
+    if (!workspace) {
+      sendJson(res, 404, { ok: false, error: "Workspace not found." });
+      return;
+    }
+
+    if (req.method === "GET" && !action) {
+      const tree = await workspaceFileTree(workspace);
+      const runs = (db.workspaceRuns || []).filter((run) => run.workspace_id === workspace.id).slice(0, 30);
+      sendJson(res, 200, { ok: true, workspace: workspaceSummary(workspace, db), tree, runs });
+      return;
+    }
+
+    if (req.method === "GET" && action === "file") {
+      const relativePath = url.searchParams.get("path") || "";
+      const filePath = resolveWorkspacePath(workspace, relativePath);
+      await assertNoWorkspaceSymlink(workspace, filePath);
+      const info = await stat(filePath).catch(() => null);
+      if (!info?.isFile()) throw httpError(404, "Workspace file not found.");
+      if (info.size > MAX_WORKSPACE_FILE_BYTES) throw httpError(413, "Workspace file is too large to open in the editor.");
+      sendJson(res, 200, { ok: true, path: normalizeWorkspacePath(relativePath), content: await readFile(filePath, "utf8"), size: info.size });
+      return;
+    }
+
+    if (req.method === "POST" && action === "file") {
+      if (!(await requireAdmin(req, res, db))) return;
+      const body = await readJson(req);
+      const relativePath = normalizeWorkspacePath(body.path);
+      const content = String(body.content ?? "");
+      if (Buffer.byteLength(content, "utf8") > MAX_WORKSPACE_FILE_BYTES) throw httpError(413, "Workspace file exceeds the editor limit.");
+      const filePath = resolveWorkspacePath(workspace, relativePath);
+      await assertNoWorkspaceSymlink(workspace, filePath);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, content, "utf8");
+      workspace.updated_at = new Date().toISOString();
+      workspace.status = "editing";
+      workspace.activity = [workspaceActivity("file-saved", relativePath), ...(workspace.activity || [])].slice(0, 100);
+      await writeDb(db);
+      sendJson(res, 200, { ok: true, path: relativePath, size: Buffer.byteLength(content, "utf8"), workspace: workspaceSummary(workspace, db) });
+      return;
+    }
+
+    if (req.method === "POST" && action === "run") {
+      if (!(await requireAdmin(req, res, db))) return;
+      const body = await readJson(req);
+      const run = await runWorkspaceCommand(workspace, body.command);
+      db.workspaceRuns = [run, ...(db.workspaceRuns || [])].slice(0, 500);
+      workspace.status = run.status === "passed" ? "verified" : "attention";
+      workspace.updated_at = new Date().toISOString();
+      workspace.last_run_id = run.id;
+      workspace.activity = [workspaceActivity("run-finished", `${run.command}: ${run.status}`), ...(workspace.activity || [])].slice(0, 100);
+      await writeDb(db);
+      sendJson(res, 200, { ok: true, run, workspace: workspaceSummary(workspace, db) });
+      return;
+    }
+  }
+
   if (url.pathname === "/api/training/jobs" && req.method === "GET") {
     const db = await readDb();
     sendJson(res, 200, { ok: true, items: db.trainingJobs || [] });
@@ -988,6 +1073,7 @@ async function serveStatic(req, res, url) {
 async function ensureStorage() {
   await mkdir(DATA_DIR, { recursive: true });
   await mkdir(GENERATED_DIR, { recursive: true });
+  await mkdir(WORKSPACES_DIR, { recursive: true });
   if (!existsSync(DB_PATH)) {
     await writeDb(defaultDb);
   }
@@ -1043,6 +1129,283 @@ async function readJson(req) {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     throw httpError(400, "Invalid JSON body.");
+  }
+}
+
+async function requireAdmin(req, res, existingDb = null) {
+  const db = existingDb || await readDb();
+  if (!isAdminTokenValid(db, getAdminToken(req))) {
+    sendJson(res, 403, { ok: false, error: "Admin unlock required." });
+    return null;
+  }
+  return db;
+}
+
+const workspaceAdapters = {
+  "web-pwa": {
+    label: "Web / PWA",
+    status: "starter-ready",
+    capabilities: ["Editable HTML/CSS/JavaScript starter", "PWA manifest", "Local syntax and test loop"],
+    limits: ["No automatic hosting or store publication"]
+  },
+  desktop: {
+    label: "Desktop",
+    status: "scaffold-only",
+    capabilities: ["Web-based desktop shell plan", "Packaging instructions"],
+    limits: ["Electron/Tauri and signing toolchains are not bundled"]
+  },
+  "native-mobile": {
+    label: "Native Mobile",
+    status: "scaffold-only",
+    capabilities: ["Capacitor-oriented project instructions", "Mobile capability manifest"],
+    limits: ["Android Studio, Xcode, SDKs and signing are required externally"]
+  },
+  godot: {
+    label: "Godot / 3D",
+    status: "scaffold-only",
+    capabilities: ["Godot project skeleton", "Scene and script starter"],
+    limits: ["Godot editor/export templates are required to compile"]
+  },
+  vr: {
+    label: "VR",
+    status: "design-scaffold",
+    capabilities: ["OpenXR-oriented architecture notes", "VR interaction manifest"],
+    limits: ["A VR runtime, headset SDK and game engine toolchain are required"]
+  }
+};
+
+async function createWorkspace(input, db) {
+  const name = String(input.name || "Untitled Workspace").trim().slice(0, 100);
+  const adapterId = String(input.adapter || "web-pwa");
+  const adapter = workspaceAdapters[adapterId];
+  if (!adapter) throw httpError(400, "Unknown workspace adapter.");
+  const workspace = {
+    id: createId("workspace"),
+    project_id: String(input.project_id || "").slice(0, 160),
+    name,
+    slug: `${safeSlug(name)}-${randomBytes(3).toString("hex")}`,
+    adapter: adapterId,
+    adapter_status: adapter.status,
+    status: "ready",
+    activity: [workspaceActivity("workspace-created", `${adapter.label} starter generated`)],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  const root = workspaceRoot(workspace);
+  await mkdir(root, { recursive: true });
+  await assertNoWorkspaceSymlink(workspace, root);
+  const files = workspaceStarterFiles(workspace, adapter);
+  for (const [fileName, content] of Object.entries(files)) {
+    const filePath = resolveWorkspacePath(workspace, fileName);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, content, "utf8");
+  }
+  const project = (db.projects || []).find((item) => item.id === workspace.project_id);
+  if (project) {
+    project.workspace_id = workspace.id;
+    project.status = "Building";
+    project.next_step = "Open the coding workspace, edit files, then run the controlled verification loop.";
+    project.updated_at = workspace.updated_at;
+  }
+  return workspace;
+}
+
+function workspaceActivity(type, detail) {
+  return { id: createId("activity"), type, detail, created_at: new Date().toISOString() };
+}
+
+function workspaceStarterFiles(workspace, adapter) {
+  const manifest = {
+    schema_version: 1,
+    name: workspace.name,
+    adapter: workspace.adapter,
+    adapter_status: adapter.status,
+    capabilities: adapter.capabilities,
+    limits: adapter.limits,
+    commands: ["syntax", "check", "test", "build-inspect"]
+  };
+  const files = {
+    "README.md": `# ${workspace.name}\n\nLocal coding workspace generated by Erleuchtung.\n\n## Adapter\n\n${adapter.label}: **${adapter.status}**\n\n${adapter.capabilities.map((item) => `- ${item}`).join("\n")}\n\n## Honest limits\n\n${adapter.limits.map((item) => `- ${item}`).join("\n")}\n\nUse the workspace UI to edit files and run the controlled verification commands.\n`,
+    "factory.manifest.json": JSON.stringify(manifest, null, 2),
+    "src/app.js": `export function workspaceStatus() {\n  return ${JSON.stringify({ name: workspace.name, adapter: workspace.adapter, ready: true }, null, 2)};\n}\n`,
+    "test/workspace.test.js": `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { workspaceStatus } from "../src/app.js";\n\ntest("workspace starter reports ready", () => {\n  assert.equal(workspaceStatus().ready, true);\n});\n`,
+    "package.json": JSON.stringify({ name: workspace.slug, private: true, type: "module", description: `${adapter.label} workspace scaffold` }, null, 2)
+  };
+  if (workspace.adapter === "web-pwa" || workspace.adapter === "desktop" || workspace.adapter === "native-mobile") {
+    files["web/index.html"] = `<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(workspace.name)}</title><main><h1>${escapeHtml(workspace.name)}</h1><p>Generated coding workspace starter.</p></main></html>\n`;
+    files["web/manifest.webmanifest"] = JSON.stringify({ name: workspace.name, short_name: workspace.name.slice(0, 24), start_url: "./", display: "standalone" }, null, 2);
+  }
+  if (workspace.adapter === "godot" || workspace.adapter === "vr") {
+    files["godot/project.godot"] = `[application]\nconfig/name="${workspace.name.replaceAll('"', "")}"\nrun/main_scene="res://main.tscn"\n\n[display]\nwindow/size/viewport_width=1280\nwindow/size/viewport_height=720\n`;
+    files["godot/main.tscn"] = `[gd_scene format=3]\n\n[node name="Main" type="Node3D"]\n`;
+  }
+  if (workspace.adapter === "desktop") files["adapters/desktop.md"] = "# Desktop packaging\n\nAdd Electron or Tauri explicitly, then configure platform signing. This workspace does not claim a compiled desktop binary.\n";
+  if (workspace.adapter === "native-mobile") files["adapters/mobile.md"] = "# Native mobile packaging\n\nUse Capacitor or a native framework with installed Android/iOS SDKs. This workspace does not claim an APK, AAB or IPA.\n";
+  if (workspace.adapter === "vr") files["adapters/vr.md"] = "# VR implementation\n\nChoose Godot OpenXR or another supported engine and validate against the target headset/runtime. This is an architecture scaffold only.\n";
+  return files;
+}
+
+function workspaceRoot(workspace) {
+  const root = resolve(WORKSPACES_DIR, workspace.slug);
+  if (!isContainedPath(WORKSPACES_DIR, root)) throw httpError(400, "Invalid workspace root.");
+  return root;
+}
+
+function normalizeWorkspacePath(value) {
+  const path = String(value || "").replaceAll("\\", "/").replace(/^\/+/, "");
+  if (!path || path.length > 240 || path.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw httpError(400, "Invalid workspace file path.");
+  }
+  if (isSensitiveWorkspacePath(path)) throw httpError(403, "Sensitive workspace paths are not accessible.");
+  return path;
+}
+
+function isSensitiveWorkspacePath(path) {
+  return path.split("/").some((part) =>
+    part.startsWith(".") ||
+    ["node_modules", "secrets", "credentials", "private", "data"].includes(part.toLowerCase()) ||
+    /(^|\.)(env|pem|key|pfx|p12|crt|cer|sqlite|db)$/i.test(part)
+  );
+}
+
+function resolveWorkspacePath(workspace, value) {
+  const normalized = normalizeWorkspacePath(value);
+  const root = workspaceRoot(workspace);
+  const target = resolve(root, normalized);
+  if (!isContainedPath(root, target)) throw httpError(403, "Workspace path escapes its root.");
+  return target;
+}
+
+function isContainedPath(root, target) {
+  const fromRoot = relative(resolve(root), resolve(target));
+  return fromRoot === "" || (!fromRoot.startsWith("..") && !fromRoot.includes(`..${sep}`) && !resolve(fromRoot).startsWith(sep));
+}
+
+async function assertNoWorkspaceSymlink(workspace, target) {
+  const root = workspaceRoot(workspace);
+  const rootInfo = await lstat(root).catch(() => null);
+  if (rootInfo?.isSymbolicLink()) throw httpError(403, "Workspace symlinks are not accessible.");
+  const parts = relative(root, target).split(sep).filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    const info = await lstat(current).catch(() => null);
+    if (info?.isSymbolicLink()) throw httpError(403, "Workspace symlinks are not accessible.");
+  }
+}
+
+async function workspaceFileTree(workspace) {
+  const items = [];
+  const root = workspaceRoot(workspace);
+  await assertNoWorkspaceSymlink(workspace, root);
+  async function walk(directory) {
+    if (items.length >= MAX_WORKSPACE_FILES) return;
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const absolute = join(directory, entry.name);
+      const path = relative(root, absolute).replaceAll("\\", "/");
+      if (entry.isSymbolicLink() || isSensitiveWorkspacePath(path)) continue;
+      if (entry.isDirectory()) {
+        items.push({ path, type: "directory" });
+        await walk(absolute);
+      } else if (entry.isFile()) {
+        const info = await stat(absolute);
+        items.push({ path, type: "file", size: info.size, editable: info.size <= MAX_WORKSPACE_FILE_BYTES });
+      }
+      if (items.length >= MAX_WORKSPACE_FILES) break;
+    }
+  }
+  await walk(root);
+  return items;
+}
+
+function workspaceSummary(workspace, db) {
+  const adapter = workspaceAdapters[workspace.adapter] || workspaceAdapters["web-pwa"];
+  const runs = (db.workspaceRuns || []).filter((run) => run.workspace_id === workspace.id);
+  return {
+    ...workspace,
+    adapter_label: adapter.label,
+    capabilities: adapter.capabilities,
+    limits: adapter.limits,
+    run_count: runs.length,
+    last_run: runs[0] || null
+  };
+}
+
+async function runWorkspaceCommand(workspace, commandValue) {
+  const command = String(commandValue || "");
+  if (!["syntax", "check", "test", "build-inspect"].includes(command)) throw httpError(400, "Command is not allowlisted.");
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
+  let result;
+  if (command === "syntax") result = await runWorkspaceSyntax(workspace);
+  if (command === "test") result = await executeWorkspaceNode(workspace, ["--test"]);
+  if (command === "build-inspect") result = await inspectWorkspaceBuild(workspace);
+  if (command === "check") {
+    const syntax = await runWorkspaceSyntax(workspace);
+    const inspect = await inspectWorkspaceBuild(workspace);
+    result = {
+      passed: syntax.passed && inspect.passed,
+      exit_code: syntax.passed && inspect.passed ? 0 : 1,
+      output: `${syntax.output}\n${inspect.output}`.trim()
+    };
+  }
+  return {
+    id: createId("workspace-run"),
+    workspace_id: workspace.id,
+    command,
+    status: result.passed ? "passed" : "failed",
+    exit_code: result.exit_code,
+    output: String(result.output || "").slice(0, MAX_RUN_OUTPUT_BYTES),
+    duration_ms: Date.now() - started,
+    started_at: startedAt,
+    finished_at: new Date().toISOString()
+  };
+}
+
+async function runWorkspaceSyntax(workspace) {
+  const files = (await workspaceFileTree(workspace)).filter((item) => item.type === "file" && item.path.endsWith(".js"));
+  const outputs = [];
+  for (const file of files) {
+    const result = await executeWorkspaceNode(workspace, ["--check", file.path]);
+    outputs.push(`${file.path}: ${result.passed ? "ok" : "failed"}${result.output ? `\n${result.output}` : ""}`);
+    if (!result.passed) return { ...result, output: outputs.join("\n") };
+  }
+  return { passed: true, exit_code: 0, output: outputs.join("\n") || "No JavaScript files found." };
+}
+
+async function executeWorkspaceNode(workspace, args) {
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, args, {
+      cwd: workspaceRoot(workspace),
+      timeout: 30000,
+      maxBuffer: MAX_RUN_OUTPUT_BYTES,
+      windowsHide: true,
+      env: { PATH: process.env.PATH || "", SYSTEMROOT: process.env.SYSTEMROOT || "", TEMP: process.env.TEMP || "" }
+    });
+    return { passed: true, exit_code: 0, output: `${stdout || ""}${stderr || ""}`.trim() };
+  } catch (error) {
+    return {
+      passed: false,
+      exit_code: Number.isInteger(error.code) ? error.code : 1,
+      output: `${error.stdout || ""}${error.stderr || error.message || ""}`.trim()
+    };
+  }
+}
+
+async function inspectWorkspaceBuild(workspace) {
+  try {
+    const manifest = JSON.parse(await readFile(resolveWorkspacePath(workspace, "factory.manifest.json"), "utf8"));
+    const adapter = workspaceAdapters[manifest.adapter];
+    if (!adapter) throw new Error("Manifest references an unknown adapter.");
+    const tree = await workspaceFileTree(workspace);
+    if (!tree.some((item) => item.path === "README.md") || !tree.some((item) => item.path === "src/app.js")) {
+      throw new Error("Required starter files are missing.");
+    }
+    return { passed: true, exit_code: 0, output: `Adapter ${adapter.label}: ${adapter.status}. ${tree.filter((item) => item.type === "file").length} files inspected. Toolchain limits remain documented in README.md.` };
+  } catch (error) {
+    return { passed: false, exit_code: 1, output: error.message };
   }
 }
 
