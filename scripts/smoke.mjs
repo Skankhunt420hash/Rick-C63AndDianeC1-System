@@ -5,7 +5,7 @@ import { chromium } from "@playwright/test";
 
 const PORT = Number(process.env.SMOKE_PORT || 8790);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const DB_PATH = join(process.cwd(), "data", "nemesis-db.json");
+const DB_PATH = join(process.cwd(), "data", "erleuchtung-db.json");
 
 let server;
 let browser;

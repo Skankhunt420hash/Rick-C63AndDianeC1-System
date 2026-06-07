@@ -1176,7 +1176,7 @@ function buildProjectAudit(health, doctor) {
           "Broaden browser smoke tests to analysis creation, builder flow and export lock.",
           "Replace demo analysis with a stronger local model pipeline once Ollama is consistently available.",
           "Add repo-level project roadmap and issue backlog so every feature has a finish line.",
-          "Add backup/export controls for data/nemesis-db.json.",
+          "Add backup/export controls for data/erleuchtung-db.json.",
           "Polish mobile navigation and fix legacy mojibake text in the UI."
         ]
       }
