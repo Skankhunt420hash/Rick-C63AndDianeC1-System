@@ -20,7 +20,8 @@ const env = {
 
 const api = {
   available: false,
-  health: null
+  health: null,
+  doctor: null
 };
 
 const schema = {
@@ -55,6 +56,7 @@ const defaultState = {
   currentReportId: null,
   currentBlueprintId: null,
   currentTrainingJobId: null,
+  projectAudit: null,
   adminSecurity: {
     configured: false,
     token: "",
@@ -121,6 +123,11 @@ function cacheElements() {
     trainingStatus: document.querySelector("#trainingStatus"),
     trainingJobs: document.querySelector("#trainingJobs"),
     trainingRefreshButton: document.querySelector("#trainingRefreshButton"),
+    auditHero: document.querySelector("#auditHero"),
+    auditStats: document.querySelector("#auditStats"),
+    auditFindings: document.querySelector("#auditFindings"),
+    auditNextSteps: document.querySelector("#auditNextSteps"),
+    refreshAuditButton: document.querySelector("#refreshAuditButton"),
     empireStats: document.querySelector("#empireStats"),
     empireProjects: document.querySelector("#empireProjects"),
     saveBlueprintButton: document.querySelector("#saveBlueprintButton"),
@@ -179,6 +186,7 @@ function wireEvents() {
     renderTraining();
     toast("Training jobs refreshed.");
   });
+  els.refreshAuditButton?.addEventListener("click", refreshAudit);
   els.exportPromptButton.addEventListener("click", exportPrompt);
   els.tasksButton.addEventListener("click", generateTasks);
   els.addEmpireButton.addEventListener("click", addCurrentBlueprintToEmpire);
@@ -1063,7 +1071,11 @@ async function initializeBackend() {
   const health = await apiGet("/api/health");
   api.available = Boolean(health?.ok);
   api.health = health || null;
+  state.projectAudit = buildProjectAudit(health, null);
   if (api.available) {
+    const doctor = await apiGet("/api/doctor");
+    api.doctor = doctor?.doctor || null;
+    state.projectAudit = buildProjectAudit(health, api.doctor);
     const status = await apiGet("/api/admin/status");
     if (status?.ok) {
       if (!state.adminSecurity) state.adminSecurity = {};
@@ -1091,6 +1103,92 @@ async function initializeBackend() {
     toast(health.ollama?.reachable ? "Backend online. Ollama/Rick-C63 ist verbunden." : "Backend online. Ollama ist noch offline, Fallback aktiv.");
   }
   renderAll();
+}
+
+async function refreshAudit() {
+  const health = await apiGet("/api/health");
+  if (health?.ok) {
+    api.available = true;
+    api.health = health;
+    const doctor = await apiGet("/api/doctor");
+    api.doctor = doctor?.doctor || null;
+    state.projectAudit = buildProjectAudit(health, api.doctor);
+    saveState();
+    renderAll();
+    toast("Project audit refreshed.");
+    return;
+  }
+  api.available = false;
+  state.projectAudit = buildProjectAudit(null, null);
+  saveState();
+  renderAll();
+  toast("Backend offline. Showing static audit.");
+}
+
+function buildProjectAudit(health, doctor) {
+  const backendOnline = Boolean(health?.ok);
+  const ollamaReady = Boolean(health?.ollama?.reachable || doctor?.ollama_ready);
+  const nodeReady = backendOnline || Boolean(doctor?.node_ready);
+  const doctorOk = doctor?.ok !== false;
+  const issues = Array.isArray(doctor?.issues) ? doctor.issues : [];
+  const repairs = Array.isArray(doctor?.repairs) ? doctor.repairs : [];
+  const hardIssues = [
+    !backendOnline ? "Backend is offline when the page is opened as a static file." : "",
+    !ollamaReady ? "Local Ollama/Rick-C63 model is not reachable; AI planning falls back to canned local logic." : "",
+    "Smoke tests cover the Audit flow now; Builder, Training and Export flows still need browser coverage.",
+    "Admin-protected export/build actions exist, but the audit should keep checking that private data stays local.",
+    "Frontend state and backend JSON sync are useful for MVP, but not enough for multi-user production."
+  ].filter(Boolean);
+  return {
+    checked_at: doctor?.checked_at || new Date().toISOString(),
+    score: backendOnline && ollamaReady && doctorOk && !issues.length ? 82 : backendOnline ? 68 : 54,
+    status: backendOnline ? "Running locally" : "Static fallback",
+    summary: backendOnline
+      ? "The local Node app is reachable, browser UI can talk to the backend, and the project is ready for feature hardening."
+      : "The frontend can render without the server, but real audit, training, export and AI routes need npm start.",
+    health: [
+      { label: "Node server", value: nodeReady ? "Ready" : "Offline", ok: nodeReady },
+      { label: "Browser app", value: "Ready", ok: true },
+      { label: "Ollama model", value: ollamaReady ? "Reachable" : "Offline", ok: ollamaReady },
+      { label: "Doctor report", value: doctorOk ? "Clean" : "Issues", ok: doctorOk }
+    ],
+    findings: [
+      {
+        title: "What works",
+        tone: "good",
+        items: [
+          "Private repo is cloned locally and runs on port 8787.",
+          "npm run check validates app.js, server.js and the Playwright audit smoke flow.",
+          "Core pages exist: Home, Rick-C63, Reports, Builder, Empire, Training, Legal and Audit.",
+          "Backend routes already cover health, doctor, chat, DB sync, products, exports and training jobs.",
+          ...repairs
+        ]
+      },
+      {
+        title: "Risks",
+        tone: hardIssues.length ? "warn" : "good",
+        items: [...issues, ...hardIssues]
+      },
+      {
+        title: "Missing to finish",
+        tone: "work",
+        items: [
+          "Broaden browser smoke tests to analysis creation, builder flow and export lock.",
+          "Replace demo analysis with a stronger local model pipeline once Ollama is consistently available.",
+          "Add repo-level project roadmap and issue backlog so every feature has a finish line.",
+          "Add backup/export controls for data/nemesis-db.json.",
+          "Polish mobile navigation and fix legacy mojibake text in the UI."
+        ]
+      }
+    ],
+    nextSteps: [
+      "Broaden Playwright coverage beyond Audit to Builder, Training and Export.",
+      "Add a persistent Roadmap page or backlog JSON for the finish-one-by-one workflow.",
+      "Make the Audit page able to trigger the self-healing doctor script from admin mode.",
+      "Clean visible encoding glitches in German UI labels.",
+      "Commit and push this audit integration after verification."
+    ]
+  };
 }
 
 function updateAdminButtonLabel() {
@@ -1398,6 +1496,7 @@ function renderAll() {
   renderBlueprintEditor();
   renderEmpire();
   renderTraining();
+  renderAudit();
 }
 
 function renderRecent() {
@@ -1481,6 +1580,7 @@ function renderActions() {
     actionCard("Build MVP Plan", "Create concrete development tasks from the current blueprint.", generateTasks),
     actionCard("Add to Empire Dashboard", "Save this blueprint as an Empire project with scores.", addCurrentBlueprintToEmpire),
     actionCard("Open Training Lab", "Collect public sources and prepare a model training package.", () => routeTo("training")),
+    actionCard("Open Project Audit", "Review runtime health, risks and next build moves.", () => routeTo("audit")),
     actionCard("Legal Safety Check", "Review allowed and blocked actions before building.", () => routeTo("legal"))
   ].join("");
   els.actionCards.querySelectorAll("[data-action]").forEach((button) => {
@@ -1733,6 +1833,33 @@ function renderTraining() {
   els.trainingJobs.querySelectorAll("[data-training-launch]").forEach((button) => {
     button.addEventListener("click", () => launchTrainingJob(button.dataset.trainingLaunch));
   });
+}
+
+function renderAudit() {
+  if (!els.auditHero || !els.auditStats || !els.auditFindings || !els.auditNextSteps) return;
+  const audit = state.projectAudit || buildProjectAudit(api.health, api.doctor);
+  const checked = audit.checked_at ? new Date(audit.checked_at).toLocaleString() : "not checked";
+  els.auditHero.innerHTML = `
+    <div>
+      <span class="status-badge ${audit.score >= 80 ? "complete" : "running"}">${escapeHtml(audit.status)}</span>
+      <h2>${audit.score}/100 project readiness</h2>
+      <p>${escapeHtml(audit.summary)}</p>
+      <small>Last check: ${escapeHtml(checked)}</small>
+    </div>
+  `;
+  els.auditStats.innerHTML = (audit.health || []).map((item) => `
+    <div class="stat-card audit-stat ${item.ok ? "ok" : "needs-work"}">
+      <strong>${escapeHtml(item.value)}</strong>
+      <span>${escapeHtml(item.label)}</span>
+    </div>
+  `).join("");
+  els.auditFindings.innerHTML = (audit.findings || []).map((group) => `
+    <article class="audit-card ${escapeHtml(group.tone || "work")}">
+      <h3>${escapeHtml(group.title)}</h3>
+      ${list(group.items || [])}
+    </article>
+  `).join("");
+  els.auditNextSteps.innerHTML = list(audit.nextSteps || []);
 }
 
 function getCurrentTrainingJob() {
@@ -2198,7 +2325,8 @@ function loadState() {
       memories: saved.memories || [],
       blueprintVersions: saved.blueprintVersions || [],
       trainingJobs: saved.trainingJobs || [],
-      currentTrainingJobId: saved.currentTrainingJobId || null
+      currentTrainingJobId: saved.currentTrainingJobId || null,
+      projectAudit: saved.projectAudit || null
     };
   } catch {
     return structuredClone(defaultState);

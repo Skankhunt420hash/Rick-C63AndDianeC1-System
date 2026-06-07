@@ -1,4 +1,5 @@
 generated-products/
+node_modules/
 node-server.*.log
 llama-test.log
 runtime/*.zip

@@ -37,6 +37,7 @@
         <button class="nav-link" data-route="blueprint">Builder</button>
         <button class="nav-link" data-route="empire">Empire</button>
         <button class="nav-link" data-route="training">Training</button>
+        <button class="nav-link" data-route="audit">Audit</button>
         <button class="nav-link" data-route="legal">Legal</button>
       </nav>
       <button class="secondary-button admin-access-button" id="adminAccessButton" title="Admin access">Admin Lock</button>
@@ -317,6 +318,28 @@
             <div id="trainingStatus" class="stats-grid"></div>
             <div id="trainingJobs" class="training-job-grid"></div>
           </section>
+        </div>
+      </section>
+
+      <section id="audit" class="page">
+        <div class="app-shell audit-layout">
+          <section class="panel audit-main">
+            <div class="section-heading">
+              <span>Project Audit</span>
+              <small>Runtime health, code status, risks and next build moves</small>
+            </div>
+            <div id="auditHero" class="audit-hero"></div>
+            <div id="auditStats" class="stats-grid"></div>
+            <div id="auditFindings" class="audit-grid"></div>
+          </section>
+          <aside class="panel audit-side">
+            <div class="section-heading">
+              <span>Build Queue</span>
+              <small>What we finish next</small>
+            </div>
+            <div id="auditNextSteps" class="audit-next"></div>
+            <button class="secondary-button full-width" id="refreshAuditButton">Refresh Audit</button>
+          </aside>
         </div>
       </section>
 

@@ -723,6 +723,90 @@ select:focus {
   gap: 18px;
 }
 
+.audit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  gap: 18px;
+}
+
+.audit-main,
+.audit-side {
+  align-content: start;
+}
+
+.audit-hero {
+  border: 1px solid rgba(83, 255, 157, 0.22);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(83, 255, 157, 0.1), rgba(29, 189, 255, 0.08));
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.audit-hero h2 {
+  margin: 10px 0 8px;
+  font-size: 34px;
+}
+
+.audit-hero p {
+  max-width: 780px;
+  margin: 0 0 10px;
+  color: #d8e8f8;
+  line-height: 1.6;
+}
+
+.audit-hero small {
+  color: var(--muted);
+}
+
+.audit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.audit-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.045);
+  padding: 14px;
+}
+
+.audit-card.good {
+  border-color: rgba(83, 255, 157, 0.24);
+}
+
+.audit-card.warn {
+  border-color: rgba(255, 209, 102, 0.3);
+}
+
+.audit-card.work {
+  border-color: rgba(29, 189, 255, 0.28);
+}
+
+.audit-card h3 {
+  margin: 0 0 10px;
+}
+
+.audit-card ul,
+.audit-next ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #d8e8f8;
+  line-height: 1.65;
+}
+
+.audit-stat.ok {
+  border-color: rgba(83, 255, 157, 0.2);
+}
+
+.audit-stat.needs-work {
+  border-color: rgba(255, 209, 102, 0.28);
+}
+
+.audit-next {
+  margin-bottom: 16px;
+}
+
 .training-copy {
   margin: 0 0 16px;
   color: var(--muted);
@@ -1269,7 +1353,8 @@ body.pulse-boost .orb-card {
   .dashboard-grid,
   .chat-layout,
   .blueprint-layout,
-  .legal-layout {
+  .legal-layout,
+  .audit-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1313,7 +1398,11 @@ body.pulse-boost .orb-card {
   .blueprint-detail,
   .project-flow,
   .suggestion-grid,
-  .builder-settings {
+    .builder-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-grid {
     grid-template-columns: 1fr;
   }
 
