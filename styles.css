@@ -12,7 +12,7 @@
   --green: #53ff9d;
   --gold: #ffd166;
   --danger: #ff5a7a;
-  --radius: 8px;
+  --radius: 22px;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
 }
 
@@ -27,6 +27,16 @@ body {
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -30%;
+  z-index: -1;
+  pointer-events: none;
+  background: conic-gradient(from 180deg, transparent, rgba(29, 189, 255, 0.06), transparent 30%, rgba(255, 62, 219, 0.06), transparent 64%, rgba(83, 255, 157, 0.05));
+  animation: cosmicTurn 36s linear infinite;
 }
 
 button,
@@ -282,7 +292,7 @@ header.app-shell {
 .secondary-button {
   min-height: 44px;
   padding: 12px 16px;
-  border-radius: var(--radius);
+  border-radius: 999px;
   font-weight: 800;
 }
 
@@ -314,6 +324,18 @@ header.app-shell {
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(20px);
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before,
+.orb-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.07), transparent 22%, transparent 72%, rgba(29, 189, 255, 0.05));
 }
 
 .orb-card {
@@ -396,6 +418,12 @@ header.app-shell {
 
 .blueprint-layout {
   grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
+  align-items: start;
+}
+
+.blueprint-layout > aside {
+  position: sticky;
+  top: 104px;
 }
 
 .legal-layout {
@@ -1024,6 +1052,153 @@ select:focus {
   padding: 14px;
 }
 
+.workflow-command {
+  margin-bottom: 22px;
+  padding: 18px;
+  border: 1px solid rgba(155, 231, 255, 0.2);
+  border-radius: 32px;
+  background: linear-gradient(135deg, rgba(13, 20, 38, 0.82), rgba(18, 12, 40, 0.72));
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.35), inset 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px);
+}
+
+.workflow-command-deck {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-command-card {
+  position: relative;
+  min-height: 148px;
+  overflow: hidden;
+  display: grid;
+  align-content: space-between;
+  gap: 7px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 14px;
+  color: var(--text);
+  background: radial-gradient(circle at 20% 10%, rgba(29, 189, 255, 0.16), transparent 42%), rgba(255, 255, 255, 0.045);
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.workflow-command-card::after {
+  content: "";
+  position: absolute;
+  width: 70px;
+  height: 70px;
+  right: -28px;
+  bottom: -30px;
+  border-radius: 50%;
+  background: var(--violet);
+  filter: blur(18px);
+  opacity: 0.18;
+}
+
+.workflow-command-card:hover {
+  transform: translateY(-6px) scale(1.015);
+  border-color: rgba(29, 189, 255, 0.58);
+  box-shadow: 0 18px 42px rgba(29, 189, 255, 0.14);
+}
+
+.workflow-command-card.done {
+  border-color: rgba(83, 255, 157, 0.42);
+  background: radial-gradient(circle at 20% 10%, rgba(83, 255, 157, 0.18), transparent 42%), rgba(255, 255, 255, 0.045);
+}
+
+.workflow-command-card span {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+  box-shadow: 0 0 20px rgba(29, 189, 255, 0.3);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workflow-command-card strong {
+  font-size: 15px;
+}
+
+.workflow-command-card small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.capability-matrix {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid rgba(141, 92, 255, 0.28);
+  border-radius: 28px;
+  background: rgba(141, 92, 255, 0.055);
+}
+
+.capability-intro {
+  display: grid;
+  gap: 7px;
+}
+
+.capability-intro small,
+.capability-card small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.capability-card {
+  min-height: 128px;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.capability-card:hover,
+.capability-card.selected {
+  transform: translateY(-3px);
+  border-color: var(--blue);
+  background: rgba(29, 189, 255, 0.1);
+}
+
+.capability-card.ready span {
+  color: var(--green);
+}
+
+.capability-card.partial span {
+  color: var(--gold);
+}
+
+.capability-card.plan span {
+  color: #c5a9ff;
+}
+
+.delivery-contract {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 13px;
+  border: 1px solid rgba(83, 255, 157, 0.24);
+  border-radius: 22px;
+  background: rgba(83, 255, 157, 0.07);
+}
+
 .portal-stage {
   position: relative;
   min-height: 170px;
@@ -1104,6 +1279,11 @@ select:focus {
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.045);
   padding: 12px;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.flow-step:hover {
+  transform: translateY(-3px);
 }
 
 .flow-step strong {
@@ -1177,7 +1357,7 @@ select:focus {
 }
 
 .builder-settings {
-  grid-template-columns: 1fr 1.2fr 0.8fr auto;
+  grid-template-columns: 1fr 1.2fr 1fr 0.8fr auto;
   align-items: end;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1302,6 +1482,10 @@ body.pulse-boost .orb-card {
   to { transform: translate3d(-120px, 120px, 0); }
 }
 
+@keyframes cosmicTurn {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes breathe {
   0%, 100% { transform: scale(1); opacity: 0.42; }
   50% { transform: scale(1.08); opacity: 0.66; }
@@ -1375,6 +1559,15 @@ body.pulse-boost .orb-card {
   .training-layout {
     grid-template-columns: 1fr;
   }
+
+  .blueprint-layout > aside {
+    position: static;
+  }
+
+  .workflow-command-deck,
+  .capability-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 700px) {
@@ -1398,7 +1591,9 @@ body.pulse-boost .orb-card {
   .blueprint-detail,
   .project-flow,
   .suggestion-grid,
-    .builder-settings {
+  .builder-settings,
+  .workflow-command-deck,
+  .capability-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1428,5 +1623,16 @@ body.pulse-boost .orb-card {
 
   .section-heading small {
     text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
   }
 }

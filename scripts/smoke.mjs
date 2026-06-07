@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
@@ -11,6 +11,7 @@ let server;
 let browser;
 let dbSnapshot = null;
 const pageErrors = [];
+const generatedDirs = [];
 
 try {
   dbSnapshot = await readFile(DB_PATH, "utf8").catch(() => null);
@@ -31,10 +32,21 @@ try {
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.goto(`${BASE_URL}/#home`, { waitUntil: "networkidle" });
+  await page.getByText("Empire Production Line", { exact: true }).waitFor();
+  if (await page.locator(".workflow-command-card").count() !== 6) {
+    throw new Error("Empire Production Line does not contain all six workflow steps.");
+  }
   for (const route of ["chat", "reports", "blueprint", "empire", "training", "audit", "legal", "home"]) {
     await page.locator(`.top-nav [data-route="${route}"]`).click();
     await page.waitForURL(`**/#${route}`);
   }
+
+  await page.locator('.top-nav [data-route="blueprint"]').click();
+  await page.getByText("Choose what this blueprint should become", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /VR Experience/ }).click();
+  await page.locator('.capability-card.selected[data-build-target="vr-game"]').waitFor();
+  await page.getByText(/Delivery target: VR Experience/).waitFor();
+  await page.locator('.top-nav [data-route="home"]').click();
 
   await page.locator("#targetText").fill('<img src=x onerror="window.__smokeXss=true"> release audit');
   await page.getByRole("button", { name: "Analyze Target" }).click();
@@ -81,16 +93,70 @@ try {
   }
 
   await assertApiHardening();
+  await assertGeneratedBuilder(browser);
   if (pageErrors.length) throw new Error(`Browser page errors: ${pageErrors.join(" | ")}`);
 
-  console.log("Smoke test passed: navigation, analysis, XSS safety, audit and hardened APIs are working.");
+  console.log("Smoke test passed: production line, delivery targets, generated app, navigation, analysis, XSS safety, audit and hardened APIs are working.");
 } finally {
   if (browser) await browser.close();
   if (server) {
     server.kill();
     await new Promise((resolve) => server.once("exit", resolve));
   }
+  for (const dir of generatedDirs) await rm(dir, { recursive: true, force: true });
   if (dbSnapshot !== null) await writeFile(DB_PATH, dbSnapshot, "utf8");
+}
+
+async function assertGeneratedBuilder(activeBrowser) {
+  const status = await fetch(`${BASE_URL}/api/admin/status`).then((response) => response.json());
+  if (status.configured) return;
+
+  const password = "smoke-release-password";
+  const setup = await fetch(`${BASE_URL}/api/admin/set-password`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password })
+  });
+  if (!setup.ok) throw new Error(`Could not configure temporary smoke admin: ${setup.status}`);
+
+  const login = await fetch(`${BASE_URL}/api/admin/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password })
+  }).then((response) => response.json());
+  if (!login.token) throw new Error("Temporary smoke admin login failed.");
+
+  const response = await fetch(`${BASE_URL}/api/product/build`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": login.token },
+    body: JSON.stringify({
+      product: {
+        name: "Smoke Generated App",
+        slug: "smoke-generated-app",
+        pitch: "Release verification product.",
+        type: "Web App",
+        deliveryLevel: "Buildable now",
+        buildTarget: { label: "Web App", output: "Working responsive web app + ZIP" },
+        versions: [{ name: "MVP", summary: "Smoke test" }],
+        modules: ["Input", "Builder", "Export"],
+        pages: ["Dashboard", "Builder"],
+        buildPhases: ["Generate", "Verify", "Export"]
+      }
+    })
+  }).then((result) => result.json());
+  if (!response.build?.url || !response.build?.dir) throw new Error("Generated builder did not return a working build.");
+  generatedDirs.push(response.build.dir);
+
+  const generatedPage = await activeBrowser.newPage();
+  generatedPage.on("pageerror", (error) => pageErrors.push(`generated app: ${error.message}`));
+  await generatedPage.goto(`${BASE_URL}${response.build.url}`, { waitUntil: "networkidle" });
+  await generatedPage.getByRole("heading", { name: "Smoke Generated App" }).waitFor();
+  await generatedPage.locator("#note").fill('<img src=x onerror="window.__generatedXss=true">');
+  await generatedPage.getByRole("button", { name: "Add Note" }).click();
+  if (await generatedPage.evaluate(() => Boolean(window.__generatedXss))) {
+    throw new Error("Generated app executed a saved note as HTML.");
+  }
+  await generatedPage.close();
 }
 
 async function assertApiHardening() {

@@ -24,6 +24,16 @@ const api = {
   doctor: null
 };
 
+const buildTargets = [
+  { id: "web-app", label: "Web App", level: "Buildable now", tone: "ready", output: "Working responsive web app + ZIP" },
+  { id: "pwa", label: "PWA / Mobile Web", level: "Buildable now", tone: "ready", output: "Installable-ready web foundation + ZIP" },
+  { id: "desktop", label: "Windows Desktop", level: "Launcher export", tone: "partial", output: "Web app + Windows launcher build target" },
+  { id: "native-mobile", label: "Native Mobile", level: "Scaffold plan", tone: "plan", output: "Product blueprint + Capacitor/Android build plan" },
+  { id: "tool", label: "Automation Tool", level: "Buildable prototype", tone: "ready", output: "Working local UI + workflow package" },
+  { id: "3d-game", label: "3D Game", level: "Design scaffold", tone: "plan", output: "Game design, systems blueprint and export package" },
+  { id: "vr-game", label: "VR Experience", level: "Design scaffold", tone: "plan", output: "VR interaction blueprint and export package" }
+];
+
 const schema = {
   user: ["id", "name", "email", "plan", "created_at", "updated_at"],
   agentSession: ["id", "user_id", "agent_name", "title", "messages", "created_at", "updated_at"],
@@ -57,6 +67,7 @@ const defaultState = {
   currentBlueprintId: null,
   currentTrainingJobId: null,
   projectAudit: null,
+  builderTarget: "web-app",
   adminSecurity: {
     configured: false,
     token: "",
@@ -101,6 +112,8 @@ function cacheElements() {
     reportsGrid: document.querySelector("#reportsGrid"),
     blueprintDetail: document.querySelector("#blueprintDetail"),
     projectFlow: document.querySelector("#projectFlow"),
+    workflowCommandDeck: document.querySelector("#workflowCommandDeck"),
+    capabilityMatrix: document.querySelector("#capabilityMatrix"),
     rickSuggestions: document.querySelector("#rickSuggestions"),
     builderSettings: document.querySelector("#builderSettings"),
     blueprintEditor: document.querySelector("#blueprintEditor"),
@@ -836,10 +849,13 @@ function generateTacticalIdeas(prompt, report) {
 function generateProductPackage(blueprint, report, prompt = "") {
   const name = blueprint.project_name || "Erleuchtung Generated App";
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "erleuchtung-app";
+  const target = buildTargets.find((item) => item.id === state.builderTarget) || buildTargets[0];
   return {
     name,
     slug,
-    type: "Generated Software Product",
+    type: target.label,
+    buildTarget: target,
+    deliveryLevel: target.level,
     pitch: `${name} is a saved software product concept that turns ${report.summary.toLowerCase()} Rick-C63 keeps it legal, buildable and connected to your Empire system.`,
     versions: [
       { name: "MVP", summary: blueprint.features.slice(0, 4).join(", ") },
@@ -867,11 +883,11 @@ function generateProductPackage(blueprint, report, prompt = "") {
       "Later connect to a real local build workspace"
     ],
     buildPhases: [
-      "Phase 1: Generate product package and save it",
-      "Phase 2: Connect package to a page in the app",
-      "Phase 3: Create real project files in a builder workspace",
-      "Phase 4: Run local LLM development loop",
-      "Phase 5: Test, package and deploy"
+      `Phase 1: Lock the ${target.label} blueprint and save it`,
+      `Phase 2: Generate ${target.output}`,
+      "Phase 3: Review the working prototype and implementation package",
+      "Phase 4: Continue the development loop with Rick-C63 and a coding workspace",
+      "Phase 5: Test, package and deploy through the target toolchain"
     ],
     starterFiles: buildStarterFiles(slug, blueprint, report, prompt)
   };
@@ -924,7 +940,7 @@ async function generateProductBuild() {
   const product = generateProductPackage(blueprint, report, "Builder button");
   saveProductPackage(product, blueprint, report);
   let build = null;
-  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt eine echte Software. Das kann einen Moment dauern, die Maschine waermt die dunklen Zahnräder.</div>`;
+  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt das ${safe(product.buildTarget.label)}-Paket. Lieferstufe: ${safe(product.deliveryLevel)}.</div>`;
   if (api.available) {
     const response = await apiPost("/api/product/build", { product });
     build = response?.build || null;
@@ -1021,8 +1037,13 @@ async function exportCurrentProject(product) {
 }
 
 function renderProductPackage(product) {
-  return `<h3>${product.name}</h3>
-    <p>${product.pitch}</p>
+  return `<h3>${safe(product.name)}</h3>
+    <p>${safe(product.pitch)}</p>
+    <div class="delivery-contract">
+      <span class="status-badge">${safe(product.buildTarget?.label || product.type)}</span>
+      <strong>${safe(product.deliveryLevel || "Product package")}</strong>
+      <small>${safe(product.buildTarget?.output || "Blueprint, working web prototype and export package")}</small>
+    </div>
     <p>Das ist ein Produktpaket: eine gespeicherte Software-Idee mit Seiten, Modulen, Datenmodell, API-Routen, Verbindungen und Build-Phasen. Keine losen Zettel auf dem Boden der Realitaet.</p>
     <h4>Versionen</h4>
     ${list(product.versions.map((item) => `${item.name}: ${item.summary}`))}
@@ -1483,6 +1504,7 @@ ${report.monetization.join(", ")}.
 }
 
 function renderAll() {
+  renderWorkflowCommandDeck();
   renderRecent();
   renderProjects();
   renderContext();
@@ -1491,9 +1513,11 @@ function renderAll() {
   renderReports();
   renderBlueprint();
   renderProjectFlow();
+  renderCapabilityMatrix();
   renderRickSuggestions();
   renderBuilderSettings();
   renderBlueprintEditor();
+  renderDevelopmentTasks();
   renderEmpire();
   renderTraining();
   renderAudit();
@@ -1623,6 +1647,75 @@ function renderBlueprint() {
   ].join("");
 }
 
+function renderDevelopmentTasks() {
+  if (!els.taskList) return;
+  const blueprint = getCurrentBlueprint();
+  const target = buildTargets.find((item) => item.id === state.builderTarget) || buildTargets[0];
+  if (!blueprint) {
+    els.taskList.innerHTML = "<li>Analyze a source to create the first build queue.</li>";
+    return;
+  }
+  const tasks = [
+    `Delivery target: ${target.label} - ${target.output}`,
+    "Review and save at least one blueprint version with Rick-C63",
+    ...(blueprint.roadmap || []).slice(0, 5),
+    "Generate, preview and export the product package"
+  ];
+  els.taskList.innerHTML = tasks.map((task) => `<li>${safe(task)}</li>`).join("");
+}
+
+function renderWorkflowCommandDeck() {
+  if (!els.workflowCommandDeck) return;
+  const project = getCurrentEmpireProject();
+  const steps = [
+    { number: "01", label: "Scan", detail: "URL, screenshot or idea", route: "home", done: Boolean(getCurrentReport()) },
+    { number: "02", label: "Extract", detail: "Legal mechanisms and strengths", route: "reports", done: Boolean(getCurrentReport()) },
+    { number: "03", label: "Blueprint", detail: "Pages, features, data and APIs", route: "blueprint", done: Boolean(getCurrentBlueprint()) },
+    { number: "04", label: "Plan with Rick", detail: "Iterate and save blueprint versions", route: "chat", done: Boolean((state.blueprintVersions || []).length) },
+    { number: "05", label: "Build", detail: "Generate the selected delivery target", route: "blueprint", done: Boolean(project?.product_package?.build) },
+    { number: "06", label: "Export", detail: "Preview, package and continue", route: "empire", done: Boolean(project?.product_package) }
+  ];
+  els.workflowCommandDeck.innerHTML = steps.map((step) => `
+    <button class="workflow-command-card ${step.done ? "done" : ""}" data-route="${step.route}">
+      <span>${step.number}</span>
+      <strong>${step.label}</strong>
+      <small>${step.detail}</small>
+    </button>
+  `).join("");
+  els.workflowCommandDeck.querySelectorAll("[data-route]").forEach((button) => {
+    button.addEventListener("click", () => routeTo(button.dataset.route));
+  });
+}
+
+function renderCapabilityMatrix() {
+  if (!els.capabilityMatrix) return;
+  const selected = state.builderTarget || "web-app";
+  els.capabilityMatrix.innerHTML = `
+    <div class="capability-intro">
+      <span class="status-badge">Delivery Engine</span>
+      <strong>Choose what this blueprint should become</strong>
+      <small>Rick-C63 builds working web prototypes now. Native, 3D and VR targets receive an honest scaffold and implementation package for their required engines.</small>
+    </div>
+    <div class="capability-grid">
+      ${buildTargets.map((target) => `
+        <button class="capability-card ${target.tone} ${selected === target.id ? "selected" : ""}" data-build-target="${target.id}">
+          <strong>${target.label}</strong>
+          <span>${target.level}</span>
+          <small>${target.output}</small>
+        </button>
+      `).join("")}
+    </div>`;
+  els.capabilityMatrix.querySelectorAll("[data-build-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.builderTarget = button.dataset.buildTarget;
+      saveState();
+      renderCapabilityMatrix();
+      renderBuilderSettings();
+      renderDevelopmentTasks();
+    });
+  });
+}
+
 function renderProjectFlow() {
   const project = getCurrentEmpireProject();
   const built = Boolean(project?.product_package?.build);
@@ -1686,6 +1779,9 @@ function renderBuilderSettings() {
   els.builderSettings.innerHTML = `
     <label>App name<input id="builderAppName" value="${escapeHtml(blueprint.project_name)}"></label>
     <label>What should it do?<textarea id="builderGoal" rows="3">${escapeHtml(blueprint.problem)}</textarea></label>
+    <label>Delivery target<select id="builderTarget">
+      ${buildTargets.map((item) => `<option value="${item.id}" ${state.builderTarget === item.id ? "selected" : ""}>${item.label} - ${item.level}</option>`).join("")}
+    </select></label>
     <label>Feeling<select id="builderFeeling">
       ${["Cosmic premium", "Developer cockpit", "Creative studio", "Conversion machine", "Learning engine"].map((item) => `<option ${state.builderFeeling === item ? "selected" : ""}>${item}</option>`).join("")}
     </select></label>
@@ -1694,6 +1790,7 @@ function renderBuilderSettings() {
   document.querySelector("#applyBuilderSettings").addEventListener("click", () => {
     blueprint.project_name = document.querySelector("#builderAppName").value.trim() || blueprint.project_name;
     blueprint.problem = document.querySelector("#builderGoal").value.trim() || blueprint.problem;
+    state.builderTarget = document.querySelector("#builderTarget").value;
     state.builderFeeling = document.querySelector("#builderFeeling").value;
     saveState();
     renderAll();
@@ -1767,7 +1864,7 @@ function snapshotBlueprint(blueprint, reason) {
 
 function renderEmpire() {
   const projects = state.empireProjects;
-  const avg = (key) => projects.length ? Math.round(projects.reduce((sum, project) => sum + project[key], 0) / projects.length) : 0;
+  const avg = (key) => projects.length ? Math.round(projects.reduce((sum, project) => sum + (Number(project[key]) || 0), 0) / projects.length) : 0;
   els.empireStats.innerHTML = [
     stat("Projects", projects.length),
     stat("Avg Legal Safety", avg("legal_safety_score")),
@@ -2251,15 +2348,20 @@ function miniReportCard(report) {
 }
 
 function projectCard(project) {
+  const status = project.status || "Blueprint Ready";
+  const priority = project.priority || "Normal";
+  const monetization = Number.isFinite(project.monetization_score) ? project.monetization_score : 0;
+  const difficulty = Number.isFinite(project.difficulty_score) ? project.difficulty_score : 0;
+  const legal = Number.isFinite(project.legal_safety_score) ? project.legal_safety_score : 0;
   return `<article class="project-card">
-    <div class="tag-row"><span class="status-badge">${safe(project.status)}</span><span class="tag">${safe(project.priority)} priority</span></div>
-    <h3>${safe(project.name)}</h3>
-    <p>${safe(project.description)}</p>
-    <p><strong>Next step:</strong> ${safe(project.next_step)}</p>
+    <div class="tag-row"><span class="status-badge">${safe(status)}</span><span class="tag">${safe(priority)} priority</span></div>
+    <h3>${safe(project.name || "Untitled project")}</h3>
+    <p>${safe(project.description || "No project description yet.")}</p>
+    <p><strong>Next step:</strong> ${safe(project.next_step || "Review and save the blueprint.")}</p>
     <div class="tag-row">
-      <span class="tag">Money ${project.monetization_score}</span>
-      <span class="tag">Difficulty ${project.difficulty_score}</span>
-      <span class="tag">Legal ${project.legal_safety_score}</span>
+      <span class="tag">Money ${monetization}</span>
+      <span class="tag">Difficulty ${difficulty}</span>
+      <span class="tag">Legal ${legal}</span>
     </div>
     <div class="button-row">
       <button class="secondary-button" data-open-project="${safe(project.id)}">Open</button>
@@ -2267,7 +2369,7 @@ function projectCard(project) {
     </div>
     <label>Status
       <select data-status="${safe(project.id)}">
-        ${["Idea", "Analyzed", "Blueprint Ready", "Building", "Testing", "Launched", "Archived"].map((status) => `<option ${status === project.status ? "selected" : ""}>${status}</option>`).join("")}
+        ${["Idea", "Analyzed", "Blueprint Ready", "Building", "Testing", "Launched", "Archived"].map((option) => `<option ${option === status ? "selected" : ""}>${option}</option>`).join("")}
       </select>
     </label>
   </article>`;
