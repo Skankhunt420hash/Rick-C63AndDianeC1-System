@@ -33,7 +33,9 @@ if (-not (Test-Path -LiteralPath $modelsFullPath)) {
 }
 
 $env:OLLAMA_MODELS = $modelsFullPath
-$env:OLLAMA_HOST = "0.0.0.0:11434"
+if (-not $env:OLLAMA_HOST) {
+  $env:OLLAMA_HOST = "127.0.0.1:11434"
+}
 
 Write-Host "Starting Ollama server for Rick-C63..."
 Write-Host "Runtime: $OllamaPath"

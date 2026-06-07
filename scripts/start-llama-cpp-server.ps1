@@ -1,6 +1,7 @@
 param(
   [string]$LlamaServerPath = $env:LLAMA_SERVER_PATH,
   [string]$ModelPath = $env:RICK_C63_MODEL_PATH,
+  [string]$HostAddress = "127.0.0.1",
   [int]$Port = 8080,
   [int]$ContextSize = 8192,
   [int]$GpuLayers = 0
@@ -42,7 +43,7 @@ $serverDir = Split-Path -Parent $LlamaServerPath
 Push-Location $serverDir
 & $LlamaServerPath `
   --model $ModelPath `
-  --host 0.0.0.0 `
+  --host $HostAddress `
   --port $Port `
   --ctx-size $ContextSize `
   --n-gpu-layers $GpuLayers

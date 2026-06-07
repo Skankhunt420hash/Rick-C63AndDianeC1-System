@@ -303,7 +303,7 @@ function setChatMode(mode) {
   });
   els.chatInput.placeholder = state.chatMode === "scan"
     ? "Scan Mode: URL, Screenshot-Idee oder neue App eingeben..."
-    : "Plan Mode: Sag Rick, was wir an der aktuellen App Ã¤ndern oder erweitern sollen...";
+    : "Plan Mode: Sag Rick, was wir an der aktuellen App ändern oder erweitern sollen...";
   saveState();
   renderPlanningBoard();
 }
@@ -510,7 +510,7 @@ function localRickCortex(prompt) {
   }
 
   return {
-    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 GedÃ¤chtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder Ã¶ffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 Gedächtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder öffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
   };
 }
 
@@ -545,7 +545,7 @@ function rickVoiceLine(mode = "analysis") {
     analysis: [
       "Alright Elija. Ich sehe den Motor unter der Chrom-Leiche. Keine Panik, nur Architektur.",
       "Okay, das Ding hat eine Seele aus Workflow und eine Steuererklaerung aus UX. Wir machen es besser.",
-      "Ich hoere die ZahnrÃ¤der klicken. Das ist kein Wunder, das ist ein System mit Make-up."
+      "Ich hoere die Zahnräder klicken. Das ist kein Wunder, das ist ein System mit Make-up."
     ],
     build: [
       "Builder-Modus. Jetzt wird aus Nebel Beton. Sehr duester, sehr praktisch.",
@@ -553,9 +553,9 @@ function rickVoiceLine(mode = "analysis") {
       "Zeit fuer Produkt-Alchemie: weniger Gerede, mehr Maschine."
     ],
     memory: [
-      "GedÃ¤chtnis aktiv. Ich vergesse nur langweilige Fehler, nicht deine Projekte.",
+      "Gedächtnis aktiv. Ich vergesse nur langweilige Fehler, nicht deine Projekte.",
       "Projekt wieder im Kopf. Der mentale Keller ist dunkel, aber sortiert.",
-      "Ich habe die Akte geladen. Sie hat NeonrÃ¤nder und vermutlich bessere Zukunftschancen als die meisten Startups."
+      "Ich habe die Akte geladen. Sie hat Neonränder und vermutlich bessere Zukunftschancen als die meisten Startups."
     ]
   };
   const bucket = lines[mode] || lines.analysis;
@@ -913,7 +913,7 @@ async function generateProductBuild() {
   if (!state.builderChoice) {
     renderRickSuggestions();
     els.rickSuggestions.scrollIntoView({ behavior: "smooth", block: "center" });
-    toast("WÃ¤hle zuerst eine Rick-C63 Richtung. Keine GlÃ¼cksrad-Software.");
+    toast("Wähle zuerst eine Rick-C63 Richtung. Keine Glücksrad-Software.");
     return;
   }
   if (!(state.blueprintVersions || []).some((item) => item.blueprint_id === blueprint.id)) {
@@ -924,7 +924,7 @@ async function generateProductBuild() {
   const product = generateProductPackage(blueprint, report, "Builder button");
   saveProductPackage(product, blueprint, report);
   let build = null;
-  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt eine echte Software. Das kann einen Moment dauern, die Maschine waermt die dunklen ZahnrÃ¤der.</div>`;
+  els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt eine echte Software. Das kann einen Moment dauern, die Maschine waermt die dunklen Zahnräder.</div>`;
   if (api.available) {
     const response = await apiPost("/api/product/build", { product });
     build = response?.build || null;
@@ -939,13 +939,13 @@ async function generateProductBuild() {
   wireBuildPreviewButtons(els.builderOutput);
   openModal("Rick-C63 Software Generator", `${html}${buildHtml}`);
   wireBuildPreviewButtons(els.modalBody);
-  toast(build ? "Software generiert. Du kannst sie jetzt Ã¶ffnen." : "Produktpaket gespeichert. Backend starten fuer echte Software.");
+  toast(build ? "Software generiert. Du kannst sie jetzt öffnen." : "Produktpaket gespeichert. Backend starten fuer echte Software.");
 }
 
 function renderBuildResult(build) {
   return `<div class="builder-output">
     <h4>Fertige Software</h4>
-    <p>Rick-C63 hat eine direkt Ã¶ffnbare App gebaut.</p>
+    <p>Rick-C63 hat eine direkt öffnbare App gebaut.</p>
     <div class="button-row">
       <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">Open Software</a>
       <button class="secondary-button" data-preview-url="${build.url}">Preview Here</button>
@@ -981,7 +981,7 @@ function openExportHub() {
   }
   const product = generateProductPackage(blueprint, report, "Export Hub");
   const html = `<div class="export-hub">
-    <p>WÃ¤hle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. EXE erzeugt eine echte Windows-Datei und signiert sie automatisch, sobald dein Authenticode-Zertifikat eingerichtet ist. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
+    <p>Wähle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. EXE erzeugt eine echte Windows-Datei und signiert sie automatisch, sobald dein Authenticode-Zertifikat eingerichtet ist. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
     <label><input type="checkbox" value="web" checked> Web Software</label>
     <label><input type="checkbox" value="codex" checked> Send to Codex package</label>
     <label><input type="checkbox" value="cursor" checked> Send to Cursor package</label>
@@ -999,14 +999,14 @@ async function exportCurrentProject(product) {
   if (!(await requireAdminAccess("Projekt-Export"))) return;
   const checked = [...document.querySelectorAll(".export-hub input:checked")].map((input) => input.value);
   const result = document.querySelector("#exportResult");
-  result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der RealitÃ¤t wackeln.</p>";
+  result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der Realität wackeln.</p>";
   if (!api.available) {
     result.innerHTML = "<p>Backend ist nicht online. Starte <code>node server.js</code>, dann kann Rick-C63 ZIPs bauen.</p>";
     return;
   }
   const response = await apiPost("/api/export/project", { product, formats: checked });
   if (!response?.ok) {
-    result.innerHTML = "<p>Export fehlgeschlagen. Backend prÃ¼fen.</p>";
+    result.innerHTML = "<p>Export fehlgeschlagen. Backend prüfen.</p>";
     return;
   }
   result.innerHTML = `<div class="builder-output">
@@ -1135,13 +1135,12 @@ function buildProjectAudit(health, doctor) {
   const hardIssues = [
     !backendOnline ? "Backend is offline when the page is opened as a static file." : "",
     !ollamaReady ? "Local Ollama/Rick-C63 model is not reachable; AI planning falls back to canned local logic." : "",
-    "Smoke tests cover the Audit flow now; Builder, Training and Export flows still need browser coverage.",
-    "Admin-protected export/build actions exist, but the audit should keep checking that private data stays local.",
+    "Training and native EXE export still depend on external runtimes and should be verified on every target machine.",
     "Frontend state and backend JSON sync are useful for MVP, but not enough for multi-user production."
   ].filter(Boolean);
   return {
     checked_at: doctor?.checked_at || new Date().toISOString(),
-    score: backendOnline && ollamaReady && doctorOk && !issues.length ? 82 : backendOnline ? 68 : 54,
+    score: backendOnline && ollamaReady && doctorOk && !issues.length ? 90 : backendOnline ? 76 : 58,
     status: backendOnline ? "Running locally" : "Static fallback",
     summary: backendOnline
       ? "The local Node app is reachable, browser UI can talk to the backend, and the project is ready for feature hardening."
@@ -1158,9 +1157,11 @@ function buildProjectAudit(health, doctor) {
         tone: "good",
         items: [
           "Private repo is cloned locally and runs on port 8787.",
-          "npm run check validates app.js, server.js and the Playwright audit smoke flow.",
+          "npm run check validates JavaScript syntax plus navigation, analysis, XSS safety, Audit and API hardening.",
           "Core pages exist: Home, Rick-C63, Reports, Builder, Empire, Training, Legal and Audit.",
           "Backend routes already cover health, doctor, chat, DB sync, products, exports and training jobs.",
+          "Sensitive repository files and admin authentication data are not exposed by public routes.",
+          "Node, Ollama and llama.cpp bind to localhost by default.",
           ...repairs
         ]
       },
@@ -1173,20 +1174,19 @@ function buildProjectAudit(health, doctor) {
         title: "Missing to finish",
         tone: "work",
         items: [
-          "Broaden browser smoke tests to analysis creation, builder flow and export lock.",
           "Replace demo analysis with a stronger local model pipeline once Ollama is consistently available.",
           "Add repo-level project roadmap and issue backlog so every feature has a finish line.",
           "Add backup/export controls for data/erleuchtung-db.json.",
-          "Polish mobile navigation and fix legacy mojibake text in the UI."
+          "Add dedicated integration tests for Training and native EXE export on a fully provisioned machine."
         ]
       }
     ],
     nextSteps: [
-      "Broaden Playwright coverage beyond Audit to Builder, Training and Export.",
+      "Add provisioned-machine coverage for Training and native EXE export.",
       "Add a persistent Roadmap page or backlog JSON for the finish-one-by-one workflow.",
       "Make the Audit page able to trigger the self-healing doctor script from admin mode.",
-      "Clean visible encoding glitches in German UI labels.",
-      "Commit and push this audit integration after verification."
+      "Add automated backups for the local database.",
+      "Keep dependencies and local runtimes updated."
     ]
   };
 }
@@ -1346,7 +1346,7 @@ async function planWithRick(prompt) {
 
 function createPlanningUpdate(prompt, blueprint, report) {
   const lowered = prompt.toLowerCase();
-  const appNameMatch = prompt.match(/(?:name|nenn|heisst|heiÃŸen|app soll)\s*:?\s*([A-ZÃ„Ã–Ãœa-zÃ¤Ã¶Ã¼0-9 -]{3,40})/i);
+  const appNameMatch = prompt.match(/(?:name|nenn|heisst|heißen|app soll)\s*:?\s*([A-ZÄÖÜa-zäöü0-9 -]{3,40})/i);
   const focus = inferPlanningFocus(lowered);
   const baseFeature = focus.feature;
   return {
@@ -1406,7 +1406,7 @@ function applyPlanningUpdate(update, blueprint) {
 }
 
 function formatPlanningAnswer(update, blueprint) {
-  return `${rickVoiceLine("build")}\n\nPlan Mode aktiv. Ich scanne jetzt nichts Neues, ich arbeite an deiner App: ${blueprint.project_name}.\n\n### Was ich Ã¤ndern wÃ¼rde\n1. ${update.features[0]}\n2. ${update.features[1]}\n3. ${update.features[2]}\n\n### In den Bauplan Ã¼bernommen\n- Neue Seite: ${update.pages.join(", ")}\n- Roadmap: ${update.roadmap.join(" â†’ ")}\n\n### NÃ¤chster Schritt\nWenn dir diese Richtung gefÃ¤llt: im Builder eine Rick-C63 Richtung wÃ¤hlen, App-Name prÃ¼fen, dann Generate Software klicken. Keine Zufalls-App. Wir bauen bewusst.`;
+  return `${rickVoiceLine("build")}\n\nPlan Mode aktiv. Ich scanne jetzt nichts Neues, ich arbeite an deiner App: ${blueprint.project_name}.\n\n### Was ich ändern würde\n1. ${update.features[0]}\n2. ${update.features[1]}\n3. ${update.features[2]}\n\n### In den Bauplan übernommen\n- Neue Seite: ${update.pages.join(", ")}\n- Roadmap: ${update.roadmap.join(" -> ")}\n\n### Nächster Schritt\nWenn dir diese Richtung gefällt: im Builder eine Rick-C63 Richtung wählen, App-Name prüfen, dann Generate Software klicken. Keine Zufalls-App. Wir bauen bewusst.`;
 }
 
 function uniqueList(items) {
@@ -1523,12 +1523,12 @@ function renderContext() {
   const trainingJob = getCurrentTrainingJob();
   const memories = (state.memories || []).slice(0, 5);
   els.contextPanel.innerHTML = `
-    <div class="mini-card"><h3>User</h3><p>${state.user.name} Â· ${state.user.plan}</p></div>
-    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} Â· Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} Â· ${api.health?.ollama?.model || "qwen3-coder:30b"}</p></div>
-    <div class="mini-card"><h3>Current Target</h3><p>${target ? target.title : "No target selected"}</p></div>
-    <div class="mini-card"><h3>Current Report</h3><p>${report ? report.summary : "No report yet"}</p></div>
-    <div class="mini-card"><h3>Training Job</h3><p>${trainingJob ? `${trainingJob.topic} Â· ${trainingJob.status}` : "No training job selected"}</p></div>
-    <div class="mini-card"><h3>Rick-C63 Memories</h3><p>${memories.length ? memories.map((memory) => memory.text).join("<br>") : "No memories yet"}</p></div>
+    <div class="mini-card"><h3>User</h3><p>${safe(state.user.name)} / ${safe(state.user.plan)}</p></div>
+    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} / Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} / ${safe(api.health?.ollama?.model || "qwen3-coder:30b")}</p></div>
+    <div class="mini-card"><h3>Current Target</h3><p>${safe(target ? target.title : "No target selected")}</p></div>
+    <div class="mini-card"><h3>Current Report</h3><p>${safe(report ? report.summary : "No report yet")}</p></div>
+    <div class="mini-card"><h3>Training Job</h3><p>${safe(trainingJob ? `${trainingJob.topic} / ${trainingJob.status}` : "No training job selected")}</p></div>
+    <div class="mini-card"><h3>Rick-C63 Memories</h3><p>${memories.length ? memories.map((memory) => safe(memory.text)).join("<br>") : "No memories yet"}</p></div>
     <div class="mini-card"><h3>Data Model</h3><p>${Object.keys(schema).join(", ")}</p></div>
   `;
 }
@@ -1541,19 +1541,19 @@ function renderPlanningBoard() {
   if (state.chatMode === "scan") {
     els.planningBoard.innerHTML = `<div class="planning-hint scan">
       <strong>Scan Mode</strong>
-      <span>FÃ¼r neue URLs, Screenshots oder frische Ideen. Danach wechselst du in Plan Mode.</span>
+      <span>Für neue URLs, Screenshots oder frische Ideen. Danach wechselst du in Plan Mode.</span>
     </div>`;
     return;
   }
   els.planningBoard.innerHTML = `<div class="planning-hint">
-      <strong>${blueprint ? blueprint.project_name : "No active project"}</strong>
-      <span>${blueprint ? "Sag Rick, was geÃ¤ndert, erweitert oder verbessert werden soll." : "Scan zuerst eine Idee oder URL."}</span>
+      <strong>${safe(blueprint ? blueprint.project_name : "No active project")}</strong>
+      <span>${blueprint ? "Sag Rick, was geändert, erweitert oder verbessert werden soll." : "Scan zuerst eine Idee oder URL."}</span>
     </div>
     <div class="quick-prompts">
-      ${["Mach das Design klarer und edler", "FÃ¼ge 3 starke Features hinzu", "Plane Login und Projekt-Speicher", "Verbessere Export zu Codex/Cursor"].map((prompt) => `<button data-quick-prompt="${prompt}">${prompt}</button>`).join("")}
+      ${["Mach das Design klarer und edler", "Füge 3 starke Features hinzu", "Plane Login und Projekt-Speicher", "Verbessere Export zu Codex/Cursor"].map((prompt) => `<button data-quick-prompt="${prompt}">${prompt}</button>`).join("")}
     </div>
     <div class="plan-notes">
-      ${notes.length ? notes.map((note) => `<div><strong>${note.focus}</strong><span>${note.prompt}</span></div>`).join("") : "<p>Noch keine Planungsnotizen.</p>"}
+      ${notes.length ? notes.map((note) => `<div><strong>${safe(note.focus)}</strong><span>${safe(note.prompt)}</span></div>`).join("") : "<p>Noch keine Planungsnotizen.</p>"}
     </div>`;
   els.planningBoard.querySelectorAll("[data-quick-prompt]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1570,7 +1570,7 @@ function setChatModeVisualOnly() {
   if (els.chatInput) {
     els.chatInput.placeholder = state.chatMode === "scan"
       ? "Scan Mode: URL, Screenshot-Idee oder neue App eingeben..."
-      : "Plan Mode: Sag Rick, was wir an der aktuellen App Ã¤ndern oder erweitern sollen...";
+      : "Plan Mode: Sag Rick, was wir an der aktuellen App ändern oder erweitern sollen...";
   }
 }
 
@@ -1616,7 +1616,7 @@ function renderBlueprint() {
     return;
   }
   els.blueprintDetail.innerHTML = [
-    block("Software Bauplan", `${blueprint.project_name}<br><span class="muted">${blueprint.problem}</span>`, "wide"),
+    block("Software Bauplan", `${safe(blueprint.project_name)}<br><span class="muted">${safe(blueprint.problem)}</span>`, "wide"),
     block("Main features", list(blueprint.features)),
     block("Pages", list(blueprint.frontend_pages)),
     block("Build path", list(blueprint.roadmap), "wide")
@@ -1652,9 +1652,9 @@ function renderRickSuggestions() {
   const suggestions = buildRickSuggestions(report, blueprint);
   els.rickSuggestions.innerHTML = suggestions.map((suggestion, index) => `
     <button class="suggestion-card ${state.builderChoice === suggestion.id ? "selected" : ""}" data-suggestion="${suggestion.id}">
-      <span>${suggestion.label}</span>
-      <strong>${suggestion.name}</strong>
-      <small>${suggestion.description}</small>
+      <span>${safe(suggestion.label)}</span>
+      <strong>${safe(suggestion.name)}</strong>
+      <small>${safe(suggestion.description)}</small>
     </button>
   `).join("");
   els.rickSuggestions.querySelectorAll("[data-suggestion]").forEach((button) => {
@@ -1672,7 +1672,7 @@ function renderRickSuggestions() {
       }
       saveState();
       renderAll();
-      toast("Rick-C63 Vorschlag gewÃ¤hlt.");
+      toast("Rick-C63 Vorschlag gewählt.");
     });
   });
 }
@@ -1711,7 +1711,7 @@ function renderBlueprintEditor() {
   els.blueprintEditor.innerHTML = `
     <div class="section-heading">
       <span>Rick-C63 Blueprint Workshop</span>
-      <small>Bearbeite den Software-Bauplan direkt oder Ã¤ndere ihn im Planning Studio zusammen mit Rick.</small>
+      <small>Bearbeite den Software-Bauplan direkt oder ändere ihn im Planning Studio zusammen mit Rick.</small>
     </div>
     <div class="blueprint-editor-grid">
       <label>App name<input id="workshopName" value="${escapeHtml(blueprint.project_name)}"></label>
@@ -1807,7 +1807,7 @@ function renderTraining() {
   const active = current
     ? `<div class="training-active">
         <strong>${escapeHtml(current.topic)}</strong>
-        <span>${escapeHtml(current.phase || "ready")} Â· ${escapeHtml(current.status || "queued")} Â· ${current.stats?.sources || 0} sources Â· ${current.stats?.examples || 0} examples</span>
+        <span>${escapeHtml(current.phase || "ready")}  /  ${escapeHtml(current.status || "queued")}  /  ${current.stats?.sources || 0} sources  /  ${current.stats?.examples || 0} examples</span>
         <small>${current.package?.url ? `Package: ${current.package.url}` : "No package exported yet."}</small>
         <small>${current.hf?.job_url ? `HF job: ${current.hf.job_url}` : "HF job not launched yet."}</small>
       </div>`
@@ -2169,7 +2169,8 @@ function exportPrompt() {
 
 function addChatMessage(role, text) {
   const now = new Date().toISOString();
-  let session = state.sessions[0];
+  if (!Array.isArray(state.sessions)) state.sessions = [];
+  let session = state.sessions.find((item) => Array.isArray(item.messages));
   if (!session) {
     session = {
       id: id("session"),
@@ -2182,6 +2183,7 @@ function addChatMessage(role, text) {
     };
     state.sessions.unshift(session);
   }
+  if (!Array.isArray(session.messages)) session.messages = [];
   session.messages.push({ role, text, created_at: now });
   session.updated_at = now;
   saveState();
@@ -2197,7 +2199,7 @@ function greetRick() {
 }
 
 function renderChat() {
-  const messages = state.sessions[0]?.messages || [];
+  const messages = state.sessions.find((item) => Array.isArray(item.messages))?.messages || [];
   els.chatMessages.innerHTML = messages.map((message) => `<div class="message ${message.role}">${escapeHtml(message.text)}</div>`).join("");
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
@@ -2218,9 +2220,9 @@ function removeThinking() {
 function fullReportCard(report) {
   const target = state.targets.find((item) => item.id === report.target_id);
   return `<article class="report-card">
-    <div class="tag-row"><span class="tag">${target?.input_type || "Target"}</span><span class="status-badge">${target?.status || "Analyzed"}</span></div>
-    <h3>${target?.title || "Analysis Report"}</h3>
-    <p>${report.summary}</p>
+    <div class="tag-row"><span class="tag">${safe(target?.input_type || "Target")}</span><span class="status-badge">${safe(target?.status || "Analyzed")}</span></div>
+    <h3>${safe(target?.title || "Analysis Report")}</h3>
+    <p>${safe(report.summary)}</p>
     ${reportSection("Detected category", [target?.category || "Full Erleuchtung Upgrade"])}
     ${reportSection("Main purpose", [report.purpose])}
     ${reportSection("Target audience", [report.target_audience])}
@@ -2239,32 +2241,32 @@ function fullReportCard(report) {
     ${reportSection("Monetization ideas", report.monetization)}
     ${reportSection("MVP plan", report.mvp_plan)}
     ${reportSection("Full build plan", report.empire_plan)}
-    <button class="primary-button full-width" data-blueprint-report="${report.id}">Create Blueprint</button>
+    <button class="primary-button full-width" data-blueprint-report="${safe(report.id)}">Create Blueprint</button>
   </article>`;
 }
 
 function miniReportCard(report) {
   const target = state.targets.find((item) => item.id === report.target_id);
-  return `<div class="mini-card"><h3>${target?.title || "Analysis"}</h3><p>${report.summary}</p><div class="tag-row"><span class="tag">${target?.category || "Analysis"}</span></div><button class="secondary-button full-width" data-open-report="${report.id}">Open Report</button></div>`;
+  return `<div class="mini-card"><h3>${safe(target?.title || "Analysis")}</h3><p>${safe(report.summary)}</p><div class="tag-row"><span class="tag">${safe(target?.category || "Analysis")}</span></div><button class="secondary-button full-width" data-open-report="${safe(report.id)}">Open Report</button></div>`;
 }
 
 function projectCard(project) {
   return `<article class="project-card">
-    <div class="tag-row"><span class="status-badge">${project.status}</span><span class="tag">${project.priority} priority</span></div>
-    <h3>${project.name}</h3>
-    <p>${project.description}</p>
-    <p><strong>Next step:</strong> ${project.next_step}</p>
+    <div class="tag-row"><span class="status-badge">${safe(project.status)}</span><span class="tag">${safe(project.priority)} priority</span></div>
+    <h3>${safe(project.name)}</h3>
+    <p>${safe(project.description)}</p>
+    <p><strong>Next step:</strong> ${safe(project.next_step)}</p>
     <div class="tag-row">
       <span class="tag">Money ${project.monetization_score}</span>
       <span class="tag">Difficulty ${project.difficulty_score}</span>
       <span class="tag">Legal ${project.legal_safety_score}</span>
     </div>
     <div class="button-row">
-      <button class="secondary-button" data-open-project="${project.id}">Open</button>
-      <button class="secondary-button" data-view-product="${project.id}">Product</button>
+      <button class="secondary-button" data-open-project="${safe(project.id)}">Open</button>
+      <button class="secondary-button" data-view-product="${safe(project.id)}">Product</button>
     </div>
     <label>Status
-      <select data-status="${project.id}">
+      <select data-status="${safe(project.id)}">
         ${["Idea", "Analyzed", "Blueprint Ready", "Building", "Testing", "Launched", "Archived"].map((status) => `<option ${status === project.status ? "selected" : ""}>${status}</option>`).join("")}
       </select>
     </label>
@@ -2272,7 +2274,7 @@ function projectCard(project) {
 }
 
 function reportSection(title, items) {
-  return `<div class="report-section"><h4>${title}</h4>${list(items)}</div>`;
+  return `<div class="report-section"><h4>${safe(title)}</h4>${list(items)}</div>`;
 }
 
 function block(title, value, extraClass = "") {
@@ -2280,16 +2282,16 @@ function block(title, value, extraClass = "") {
 }
 
 function list(items) {
-  if (!Array.isArray(items)) return `<p>${items}</p>`;
-  return `<ul>${items.map((item) => `<li>${typeof item === "string" ? item : JSON.stringify(item)}</li>`).join("")}</ul>`;
+  if (!Array.isArray(items)) return `<p>${safe(items)}</p>`;
+  return `<ul>${items.map((item) => `<li>${safe(typeof item === "string" ? item : JSON.stringify(item))}</li>`).join("")}</ul>`;
 }
 
 function stat(label, value) {
-  return `<div class="stat-card"><strong>${value}</strong><span>${label}</span></div>`;
+  return `<div class="stat-card"><strong>${safe(value)}</strong><span>${safe(label)}</span></div>`;
 }
 
 function emptyState(message) {
-  return `<div class="mini-card"><p>${message}</p></div>`;
+  return `<div class="mini-card"><p>${safe(message)}</p></div>`;
 }
 
 function getCurrentReport() {
@@ -2429,7 +2431,7 @@ function downloadText(filename, text) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

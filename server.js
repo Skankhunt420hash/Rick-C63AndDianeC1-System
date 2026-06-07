@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { extname, join, normalize } from "node:path";
+import { extname, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 const ROOT = process.cwd();
 const DATA_DIR = join(ROOT, "data");
@@ -12,6 +14,8 @@ const DB_PATH = join(DATA_DIR, "erleuchtung-db.json");
 const DOCTOR_PATH = join(DATA_DIR, "doctor-report.json");
 const GENERATED_DIR = join(ROOT, "generated-products");
 const PORT = Number(process.env.PORT || 8787);
+const HOST = process.env.HOST || "127.0.0.1";
+const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 1024 * 1024);
 const LLAMA_URL = process.env.LLAMA_CPP_URL || "http://127.0.0.1:8080";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.RICK_C63_OLLAMA_MODEL || "qwen3-coder:30b";
@@ -67,12 +71,15 @@ const server = createServer(async (req, res) => {
     }
     await serveStatic(req, res, url);
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, error.statusCode || 500, {
+      ok: false,
+      error: error.statusCode ? error.message : "Internal server error"
+    });
   }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Erleuchtung (Rick-C63 & Diane-Droidijana) server running on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Erleuchtung (Rick-C63 & Diane-Droidijana) server running on http://${HOST}:${PORT}`);
   console.log(`Rick-C63 Ollama target: ${OLLAMA_URL} (${OLLAMA_MODEL})`);
   console.log(`Legacy llama.cpp fallback target: ${LLAMA_URL}`);
 });
@@ -180,7 +187,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/db") {
-    sendJson(res, 200, { ok: true, db: await readDb() });
+    sendJson(res, 200, { ok: true, db: publicDb(await readDb()) });
     return;
   }
 
@@ -254,6 +261,10 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/admin/logout") {
     const db = await readDb();
+    if (!isAdminTokenValid(db, getAdminToken(req))) {
+      sendJson(res, 403, { ok: false, error: "Admin unlock required." });
+      return;
+    }
     db.adminAuth.session_token = "";
     db.adminAuth.session_expires_at = "";
     await writeDb(db);
@@ -266,29 +277,34 @@ async function handleApi(req, res, url) {
     const db = await readDb();
     const merged = mergeDb(db, body);
     await writeDb(merged);
-    sendJson(res, 200, { ok: true, db: merged });
+    sendJson(res, 200, { ok: true, db: publicDb(merged) });
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/chat") {
     const body = await readJson(req);
+    const prompt = String(body.prompt || "").trim();
+    if (!prompt) {
+      sendJson(res, 400, { ok: false, error: "Prompt is required." });
+      return;
+    }
     const db = await readDb();
-    const result = await askRick(body.prompt || "", body.context || {}, db);
+    const result = await askRick(prompt, body.context || {}, db);
     db.sessions.unshift({
       id: createId("session"),
-      prompt: body.prompt || "",
+      prompt,
       response: result.text,
       provider: result.provider,
       created_at: new Date().toISOString()
     });
     db.memories.unshift({
       id: createId("memory"),
-      text: `Rick-C63 discussed: ${(body.prompt || "").slice(0, 180)}`,
+      text: `Rick-C63 discussed: ${prompt.slice(0, 180)}`,
       created_at: new Date().toISOString()
     });
     db.memories = db.memories.slice(0, 100);
     await writeDb(db);
-    sendJson(res, 200, { ok: true, ...result, db });
+    sendJson(res, 200, { ok: true, ...result, db: publicDb(db) });
     return;
   }
 
@@ -307,7 +323,7 @@ async function handleApi(req, res, url) {
     const build = await writeGeneratedProduct(product);
     db.products.unshift({ ...product, build, saved_at: new Date().toISOString() });
     await writeDb(db);
-    sendJson(res, 200, { ok: true, product, build, db });
+    sendJson(res, 200, { ok: true, product, build, db: publicDb(db) });
     return;
   }
 
@@ -937,10 +953,16 @@ const crcTable = (() => {
 })();
 
 async function serveStatic(req, res, url) {
-  const pathname = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
-  const normalized = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  const filePath = join(ROOT, normalized);
-  if (!filePath.startsWith(ROOT) || !existsSync(filePath)) {
+  const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  const allowedRootFiles = new Set(["/index.html", "/app.js", "/styles.css"]);
+  const allowedDirectory = pathname.startsWith("/generated-products/") || pathname.startsWith("/exports/");
+  if (!allowedRootFiles.has(pathname) && !allowedDirectory) {
+    sendJson(res, 404, { ok: false, error: "Not found" });
+    return;
+  }
+  const filePath = resolve(ROOT, `.${pathname}`);
+  const pathFromRoot = relative(ROOT, filePath);
+  if (pathFromRoot.startsWith("..") || pathFromRoot.includes(`..${sep}`) || !existsSync(filePath)) {
     sendJson(res, 404, { ok: false, error: "Not found" });
     return;
   }
@@ -1003,14 +1025,34 @@ function mergeById(current, incoming) {
 
 async function readJson(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_JSON_BYTES) {
+      throw httpError(413, `JSON body exceeds ${MAX_JSON_BYTES} bytes.`);
+    }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw httpError(400, "Invalid JSON body.");
+  }
 }
 
 function sendJson(res, status, data) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(data, null, 2));
+}
+
+function httpError(statusCode, message) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+function publicDb(db) {
+  const { adminAuth, ...safeDb } = db || {};
+  return safeDb;
 }
 
 function safeSlug(value) {
@@ -1256,11 +1298,13 @@ function extractSearchResultLinks(html) {
 
 async function fetchPublicPage(url) {
   try {
+    await assertPublicWebUrl(url);
     const response = await fetch(url, {
       headers: {
         "user-agent": "Mozilla/5.0 Erleuchtung Training Bot",
         accept: "text/html,application/xhtml+xml,application/xml,text/plain,*/*"
       },
+      redirect: "error",
       signal: AbortSignal.timeout(12000)
     });
     if (!response.ok) return null;
@@ -1850,6 +1894,39 @@ function normalizeWebUrl(value, base = "") {
   } catch {
     return null;
   }
+}
+
+async function assertPublicWebUrl(value) {
+  const parsed = normalizeWebUrl(value);
+  if (!parsed) throw httpError(400, "Only public HTTP(S) URLs are allowed.");
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    throw httpError(400, "Local URLs are not allowed.");
+  }
+  const addresses = isIP(hostname)
+    ? [{ address: hostname }]
+    : await lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw httpError(400, "Private network URLs are not allowed.");
+  }
+}
+
+function isPrivateAddress(address) {
+  const normalized = address.toLowerCase();
+  if (normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) {
+    return true;
+  }
+  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  const ipv4 = mapped || (isIP(normalized) === 4 ? normalized : "");
+  if (!ipv4) return false;
+  const [a, b] = ipv4.split(".").map(Number);
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || a >= 224;
 }
 
 function normalizeUrlList(value) {

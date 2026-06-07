@@ -4,7 +4,7 @@ Private Erleuchtung software system for Rick-C63 and Diane-C1.
 
 Read the core text first:
 
-- [BIBEL.md](/C:/Users/elbbu/Documents/Nemesis%20Rick&Droidijana/BIBEL.md)
+- [BIBEL.md](BIBEL.md)
 
 ## What this repo is
 
