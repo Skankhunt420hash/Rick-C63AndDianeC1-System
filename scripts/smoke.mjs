@@ -172,10 +172,22 @@ async function assertWorkspaceFactory(page, adminToken) {
   if (unauthorized.status !== 403) throw new Error(`Unauthorized workspace creation returned ${unauthorized.status}, expected 403.`);
   if (!adminToken) return;
 
+  const blueprintId = `smoke-blueprint-${Date.now()}`;
+  const projectId = `smoke-project-${Date.now()}`;
+  const sync = await fetch(`${BASE_URL}/api/db/sync`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": adminToken },
+    body: JSON.stringify({ db: {
+      blueprints: [{ id: blueprintId, project_name: "Linked Smoke Product", tagline: "Blueprint flows into workspace", features: ["Evidence-backed feature"], frontend_pages: ["Evidence Board"] }],
+      empireProjects: [{ id: projectId, blueprint_id: blueprintId, name: "Linked Smoke Project" }]
+    } })
+  });
+  if (!sync.ok) throw new Error(`Admin project sync failed: ${sync.status}`);
+
   const create = await fetch(`${BASE_URL}/api/workspaces`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-admin-token": adminToken },
-    body: JSON.stringify({ name: "Smoke Workspace", adapter: "web-pwa" })
+    body: JSON.stringify({ name: "Smoke Workspace", adapter: "web-pwa", project_id: projectId })
   }).then((response) => response.json());
   if (!create.workspace?.id || !create.workspace?.slug) throw new Error(`Workspace creation failed: ${JSON.stringify(create)}`);
   workspaceDirs.push(join(process.cwd(), "generated", "workspaces", create.workspace.slug));
@@ -183,9 +195,16 @@ async function assertWorkspaceFactory(page, adminToken) {
 
   const detail = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}`).then((response) => response.json());
   if (!detail.tree?.some((item) => item.path === "src/app.js")) throw new Error("Workspace file tree is missing src/app.js.");
+  if (!detail.workspace?.readiness?.checks?.length || !detail.workspace.preview_url) throw new Error("Workspace readiness or preview URL is missing.");
+  const preview = await fetch(`${BASE_URL}${detail.workspace.preview_url}`);
+  if (!preview.ok || !(await preview.text()).includes("Smoke Workspace")) throw new Error("Contained workspace preview did not render.");
+  const previewEscape = await fetch(`${BASE_URL}/workspace-previews/${workspaceId}/../factory.manifest.json`);
+  if (previewEscape.status !== 404) throw new Error(`Workspace preview traversal returned ${previewEscape.status}, expected 404.`);
 
   const file = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file?path=${encodeURIComponent("src/app.js")}`).then((response) => response.json());
   if (!file.content?.includes("workspaceStatus")) throw new Error("Workspace file read did not return starter content.");
+  const spec = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file?path=${encodeURIComponent("product.spec.json")}`).then((response) => response.json());
+  if (!spec.content?.includes("Evidence-backed feature") || !spec.content?.includes("Evidence Board")) throw new Error("Linked blueprint did not flow into product.spec.json.");
 
   const write = await fetch(`${BASE_URL}/api/workspaces/${workspaceId}/file`, {
     method: "POST",
@@ -289,6 +308,38 @@ async function assertApiHardening() {
     body: JSON.stringify({ command: "test" })
   });
   if (unauthorizedRun.status !== 404) throw new Error(`Unknown workspace returned ${unauthorizedRun.status}, expected 404.`);
+
+  const privateScan = await fetch(`${BASE_URL}/api/scan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "http://127.0.0.1:8787/" })
+  });
+  if (privateScan.status !== 400) throw new Error(`Private-network scan returned ${privateScan.status}, expected 400.`);
+
+  const descriptionScan = await fetch(`${BASE_URL}/api/scan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: "Collaborative AI builder with dashboard, preview and export workflow." })
+  }).then((response) => response.json());
+  if (!descriptionScan.scan?.evidence?.length || !descriptionScan.scan?.reusable_patterns?.length || !descriptionScan.scan?.blueprint_seed?.features?.length) {
+    throw new Error(`Description scan did not return evidence-backed blueprint seed: ${JSON.stringify(descriptionScan)}`);
+  }
+
+  const unauthorizedTraining = await fetch(`${BASE_URL}/api/training/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ topic: "Unauthorized training" })
+  });
+  if (unauthorizedTraining.status !== 403) throw new Error(`Unauthorized training creation returned ${unauthorizedTraining.status}, expected 403.`);
+
+  for (const path of ["/api/db/sync", "/api/blueprints", "/api/empire-projects"]) {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ item: { id: "unauthorized-write" } })
+    });
+    if (response.status !== 403) throw new Error(`Unauthorized mutation ${path} returned ${response.status}, expected 403.`);
+  }
 }
 
 async function launchBrowser() {

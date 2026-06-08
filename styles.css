@@ -1457,6 +1457,14 @@ select:focus {
   margin: 18px 0;
 }
 
+.workspace-preview-frame {
+  width: 100%;
+  min-height: 560px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .workspace-editor-layout {
   display: grid;
   grid-template-columns: minmax(210px, 0.35fr) minmax(0, 1fr);

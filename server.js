@@ -20,6 +20,7 @@ const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 1024 * 1024);
 const MAX_WORKSPACE_FILE_BYTES = Number(process.env.MAX_WORKSPACE_FILE_BYTES || 256 * 1024);
 const MAX_WORKSPACE_FILES = 300;
 const MAX_RUN_OUTPUT_BYTES = 128 * 1024;
+const MAX_SCAN_TEXT_BYTES = 32 * 1024;
 const LLAMA_URL = process.env.LLAMA_CPP_URL || "http://127.0.0.1:8080";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.RICK_C63_OLLAMA_MODEL || "qwen3-coder:30b";
@@ -75,6 +76,10 @@ const server = createServer(async (req, res) => {
       await handleApi(req, res, url);
       return;
     }
+    if (url.pathname.startsWith("/workspace-previews/")) {
+      await serveWorkspacePreview(req, res, url);
+      return;
+    }
     await serveStatic(req, res, url);
   } catch (error) {
     sendJson(res, error.statusCode || 500, {
@@ -91,6 +96,13 @@ server.listen(PORT, HOST, () => {
 });
 
 async function handleApi(req, res, url) {
+  if (url.pathname === "/api/scan" && req.method === "POST") {
+    const body = await readJson(req);
+    const result = await scanProductSource(body);
+    sendJson(res, 200, { ok: true, scan: result });
+    return;
+  }
+
   if (url.pathname === "/api/workspaces" && req.method === "GET") {
     const db = await readDb();
     sendJson(res, 200, { ok: true, items: (db.workspaces || []).map((item) => workspaceSummary(item, db)) });
@@ -122,7 +134,7 @@ async function handleApi(req, res, url) {
     if (req.method === "GET" && !action) {
       const tree = await workspaceFileTree(workspace);
       const runs = (db.workspaceRuns || []).filter((run) => run.workspace_id === workspace.id).slice(0, 30);
-      sendJson(res, 200, { ok: true, workspace: workspaceSummary(workspace, db), tree, runs });
+      sendJson(res, 200, { ok: true, workspace: workspaceSummary(workspace, db, tree), tree, runs });
       return;
     }
 
@@ -177,6 +189,7 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === "/api/training/jobs" && req.method === "POST") {
+    if (!(await requireAdmin(req, res))) return;
     const body = await readJson(req);
     const db = await readDb();
     const job = createTrainingJob(body.job || body);
@@ -203,6 +216,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "POST" && action === "run") {
+      if (!(await requireAdmin(req, res, db))) return;
       const body = await readJson(req);
       const updated = await runTrainingPipeline(job, body.options || {});
       db.trainingJobs[jobIndex] = updated;
@@ -212,6 +226,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "POST" && action === "export") {
+      if (!(await requireAdmin(req, res, db))) return;
       const updated = await exportTrainingPackage(job);
       db.trainingJobs[jobIndex] = updated;
       await writeDb(db);
@@ -220,6 +235,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "POST" && action === "hf-launch") {
+      if (!(await requireAdmin(req, res, db))) return;
       const body = await readJson(req);
       const updated = await launchHuggingFaceTrainingJob(job, body.options || {});
       db.trainingJobs[jobIndex] = updated;
@@ -245,6 +261,7 @@ async function handleApi(req, res, url) {
     return;
   }
   if (collection && req.method === "POST") {
+    if (!(await requireAdmin(req, res))) return;
     const body = await readJson(req);
     const item = body.item || body;
     if (!item?.id) {
@@ -358,6 +375,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/db/sync") {
+    if (!(await requireAdmin(req, res))) return;
     const body = await readJson(req);
     const db = await readDb();
     const merged = mergeDb(db, body);
@@ -1042,6 +1060,35 @@ const crcTable = (() => {
   return table;
 })();
 
+async function serveWorkspacePreview(req, res, url) {
+  if (req.method !== "GET") throw httpError(405, "Workspace previews only support GET.");
+  const parts = url.pathname.split("/").filter(Boolean);
+  const workspaceId = parts[1] || "";
+  const requested = decodeURIComponent(parts.slice(2).join("/") || "index.html");
+  const db = await readDb();
+  const workspace = (db.workspaces || []).find((item) => item.id === workspaceId);
+  if (!workspace) throw httpError(404, "Workspace not found.");
+  if (!["web-pwa", "desktop", "native-mobile"].includes(workspace.adapter)) {
+    throw httpError(404, "This adapter has no browser preview.");
+  }
+  const webRoot = resolveWorkspacePath(workspace, "web/index.html").replace(/[\\/]index\.html$/, "");
+  const target = resolve(webRoot, requested);
+  if (!isContainedPath(webRoot, target)) throw httpError(403, "Preview path escapes the web root.");
+  await assertNoWorkspaceSymlink(workspace, target);
+  const info = await stat(target).catch(() => null);
+  if (!info?.isFile()) throw httpError(404, "Preview file not found.");
+  if (info.size > 2 * 1024 * 1024) throw httpError(413, "Preview file is too large.");
+  const content = await readFile(target);
+  res.writeHead(200, {
+    "content-type": mimeTypes[extname(target)] || "application/octet-stream",
+    "content-length": content.length,
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer"
+  });
+  res.end(content);
+}
+
 async function serveStatic(req, res, url) {
   const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
   const allowedRootFiles = new Set(["/index.html", "/app.js", "/styles.css"]);
@@ -1060,7 +1107,10 @@ async function serveStatic(req, res, url) {
   const extension = extname(filePath);
   const headers = {
     "content-type": mimeTypes[extension] || "application/octet-stream",
-    "content-length": content.length
+    "content-length": content.length,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "x-frame-options": "SAMEORIGIN"
   };
   if (url.pathname.startsWith("/exports/") && [".exe", ".zip"].includes(extension)) {
     const filename = filePath.split(/[\\/]/).pop();
@@ -1179,9 +1229,12 @@ async function createWorkspace(input, db) {
   const adapterId = String(input.adapter || "web-pwa");
   const adapter = workspaceAdapters[adapterId];
   if (!adapter) throw httpError(400, "Unknown workspace adapter.");
+  const project = (db.projects || []).find((item) => item.id === String(input.project_id || ""));
+  const blueprint = (db.blueprints || []).find((item) => item.id === project?.blueprint_id);
   const workspace = {
     id: createId("workspace"),
     project_id: String(input.project_id || "").slice(0, 160),
+    blueprint_id: String(blueprint?.id || "").slice(0, 160),
     name,
     slug: `${safeSlug(name)}-${randomBytes(3).toString("hex")}`,
     adapter: adapterId,
@@ -1194,13 +1247,12 @@ async function createWorkspace(input, db) {
   const root = workspaceRoot(workspace);
   await mkdir(root, { recursive: true });
   await assertNoWorkspaceSymlink(workspace, root);
-  const files = workspaceStarterFiles(workspace, adapter);
+  const files = workspaceStarterFiles(workspace, adapter, { project, blueprint });
   for (const [fileName, content] of Object.entries(files)) {
     const filePath = resolveWorkspacePath(workspace, fileName);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, "utf8");
   }
-  const project = (db.projects || []).find((item) => item.id === workspace.project_id);
   if (project) {
     project.workspace_id = workspace.id;
     project.status = "Building";
@@ -1214,7 +1266,10 @@ function workspaceActivity(type, detail) {
   return { id: createId("activity"), type, detail, created_at: new Date().toISOString() };
 }
 
-function workspaceStarterFiles(workspace, adapter) {
+function workspaceStarterFiles(workspace, adapter, context = {}) {
+  const blueprint = context.blueprint || {};
+  const features = Array.isArray(blueprint.features) ? blueprint.features.slice(0, 12) : [];
+  const pages = Array.isArray(blueprint.frontend_pages) ? blueprint.frontend_pages.slice(0, 12) : [];
   const manifest = {
     schema_version: 1,
     name: workspace.name,
@@ -1222,17 +1277,21 @@ function workspaceStarterFiles(workspace, adapter) {
     adapter_status: adapter.status,
     capabilities: adapter.capabilities,
     limits: adapter.limits,
+    blueprint_id: workspace.blueprint_id,
+    features,
+    pages,
     commands: ["syntax", "check", "test", "build-inspect"]
   };
   const files = {
-    "README.md": `# ${workspace.name}\n\nLocal coding workspace generated by Erleuchtung.\n\n## Adapter\n\n${adapter.label}: **${adapter.status}**\n\n${adapter.capabilities.map((item) => `- ${item}`).join("\n")}\n\n## Honest limits\n\n${adapter.limits.map((item) => `- ${item}`).join("\n")}\n\nUse the workspace UI to edit files and run the controlled verification commands.\n`,
+    "README.md": `# ${workspace.name}\n\nLocal coding workspace generated by Erleuchtung${workspace.blueprint_id ? " from a saved blueprint" : ""}.\n\n## Product direction\n\n${blueprint.tagline || context.project?.description || "Define the product direction in product.spec.json."}\n\n## Features\n\n${features.length ? features.map((item) => `- ${item}`).join("\n") : "- No linked blueprint features yet."}\n\n## Pages\n\n${pages.length ? pages.map((item) => `- ${item}`).join("\n") : "- No linked blueprint pages yet."}\n\n## Adapter\n\n${adapter.label}: **${adapter.status}**\n\n${adapter.capabilities.map((item) => `- ${item}`).join("\n")}\n\n## Honest limits\n\n${adapter.limits.map((item) => `- ${item}`).join("\n")}\n\nUse the workspace UI to edit files and run the controlled verification commands.\n`,
     "factory.manifest.json": JSON.stringify(manifest, null, 2),
-    "src/app.js": `export function workspaceStatus() {\n  return ${JSON.stringify({ name: workspace.name, adapter: workspace.adapter, ready: true }, null, 2)};\n}\n`,
+    "product.spec.json": JSON.stringify({ name: blueprint.project_name || workspace.name, tagline: blueprint.tagline || "", problem: blueprint.problem || "", target_user: blueprint.target_user || "", features, pages, roadmap: blueprint.roadmap || [], test_plan: blueprint.test_plan || [] }, null, 2),
+    "src/app.js": `export function workspaceStatus() {\n  return ${JSON.stringify({ name: workspace.name, adapter: workspace.adapter, blueprint_id: workspace.blueprint_id, feature_count: features.length, ready: true }, null, 2)};\n}\n`,
     "test/workspace.test.js": `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { workspaceStatus } from "../src/app.js";\n\ntest("workspace starter reports ready", () => {\n  assert.equal(workspaceStatus().ready, true);\n});\n`,
     "package.json": JSON.stringify({ name: workspace.slug, private: true, type: "module", description: `${adapter.label} workspace scaffold` }, null, 2)
   };
   if (workspace.adapter === "web-pwa" || workspace.adapter === "desktop" || workspace.adapter === "native-mobile") {
-    files["web/index.html"] = `<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(workspace.name)}</title><main><h1>${escapeHtml(workspace.name)}</h1><p>Generated coding workspace starter.</p></main></html>\n`;
+    files["web/index.html"] = `<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(workspace.name)}</title><style>body{font-family:system-ui;margin:0;background:#080b18;color:#f3f7ff}main{max-width:960px;margin:auto;padding:64px 24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{padding:16px;border:1px solid #33406b;border-radius:12px;background:#11172b}</style><main><p>${escapeHtml(adapter.label)} workspace preview</p><h1>${escapeHtml(blueprint.project_name || workspace.name)}</h1><p>${escapeHtml(blueprint.tagline || "Generated coding workspace starter.")}</p><h2>Blueprint features</h2><div class="grid">${(features.length ? features : ["Define the first product feature"]).map((item) => `<article class="card">${escapeHtml(item)}</article>`).join("")}</div></main></html>\n`;
     files["web/manifest.webmanifest"] = JSON.stringify({ name: workspace.name, short_name: workspace.name.slice(0, 24), start_url: "./", display: "standalone" }, null, 2);
   }
   if (workspace.adapter === "godot" || workspace.adapter === "vr") {
@@ -1320,16 +1379,38 @@ async function workspaceFileTree(workspace) {
   return items;
 }
 
-function workspaceSummary(workspace, db) {
+function workspaceSummary(workspace, db, tree = null) {
   const adapter = workspaceAdapters[workspace.adapter] || workspaceAdapters["web-pwa"];
   const runs = (db.workspaceRuns || []).filter((run) => run.workspace_id === workspace.id);
+  const readiness = workspaceReadiness(workspace, adapter, tree);
   return {
     ...workspace,
     adapter_label: adapter.label,
     capabilities: adapter.capabilities,
     limits: adapter.limits,
+    readiness,
+    preview_url: readiness.preview.available ? `/workspace-previews/${encodeURIComponent(workspace.id)}/` : "",
     run_count: runs.length,
     last_run: runs[0] || null
+  };
+}
+
+function workspaceReadiness(workspace, adapter, tree = null) {
+  const paths = new Set((tree || []).map((item) => item.path));
+  const hasWebEntry = tree ? paths.has("web/index.html") : ["web-pwa", "desktop", "native-mobile"].includes(workspace.adapter);
+  const checks = [
+    { id: "starter", label: "Starter files", status: "ready", detail: "Factory manifest, source and tests are generated." },
+    { id: "verification", label: "Controlled verification", status: workspace.status === "verified" ? "ready" : "action", detail: workspace.status === "verified" ? "At least one verification loop passed." : "Run Check and Test in this workspace." },
+    { id: "adapter", label: `${adapter.label} adapter`, status: adapter.status === "starter-ready" ? "ready" : "external", detail: adapter.status === "starter-ready" ? "Locally buildable starter." : adapter.limits.join(" ") }
+  ];
+  return {
+    level: checks.every((item) => item.status === "ready") ? "verified" : adapter.status === "starter-ready" ? "local-ready" : "scaffold-only",
+    checks,
+    preview: {
+      available: hasWebEntry,
+      detail: hasWebEntry ? "Served from the contained web directory." : "This adapter has no browser preview."
+    },
+    external_requirements: adapter.limits
   };
 }
 
@@ -1400,10 +1481,17 @@ async function inspectWorkspaceBuild(workspace) {
     const adapter = workspaceAdapters[manifest.adapter];
     if (!adapter) throw new Error("Manifest references an unknown adapter.");
     const tree = await workspaceFileTree(workspace);
-    if (!tree.some((item) => item.path === "README.md") || !tree.some((item) => item.path === "src/app.js")) {
-      throw new Error("Required starter files are missing.");
-    }
-    return { passed: true, exit_code: 0, output: `Adapter ${adapter.label}: ${adapter.status}. ${tree.filter((item) => item.type === "file").length} files inspected. Toolchain limits remain documented in README.md.` };
+    const paths = new Set(tree.map((item) => item.path));
+    const required = ["README.md", "factory.manifest.json", "product.spec.json", "src/app.js", "test/workspace.test.js"];
+    if (["web-pwa", "desktop", "native-mobile"].includes(workspace.adapter)) required.push("web/index.html", "web/manifest.webmanifest");
+    if (["godot", "vr"].includes(workspace.adapter)) required.push("godot/project.godot", "godot/main.tscn");
+    if (workspace.adapter === "desktop") required.push("adapters/desktop.md");
+    if (workspace.adapter === "native-mobile") required.push("adapters/mobile.md");
+    if (workspace.adapter === "vr") required.push("adapters/vr.md");
+    const missing = required.filter((path) => !paths.has(path));
+    if (missing.length) throw new Error(`Required adapter files are missing: ${missing.join(", ")}`);
+    const readiness = workspaceReadiness(workspace, adapter, tree);
+    return { passed: true, exit_code: 0, output: `Adapter ${adapter.label}: ${adapter.status}. Readiness: ${readiness.level}. ${tree.filter((item) => item.type === "file").length} files inspected. External limits: ${adapter.limits.join(" ")}` };
   } catch (error) {
     return { passed: false, exit_code: 1, output: error.message };
   }
@@ -1664,6 +1752,80 @@ function extractSearchResultLinks(html) {
   return links;
 }
 
+async function scanProductSource(input = {}) {
+  const rawUrl = String(input.url || "").trim();
+  const notes = String(input.text || input.description || "").trim();
+  if (!rawUrl && !notes) throw httpError(400, "A public URL or software description is required.");
+  if (Buffer.byteLength(notes, "utf8") > MAX_SCAN_TEXT_BYTES) throw httpError(413, "Software description is too large.");
+
+  let source = null;
+  let normalizedUrl = "";
+  if (rawUrl) {
+    const parsed = normalizeWebUrl(rawUrl);
+    if (!parsed) throw httpError(400, "Only public HTTP(S) URLs are allowed.");
+    await assertPublicWebUrl(parsed.href);
+    normalizedUrl = parsed.href;
+    source = await fetchPublicPage(normalizedUrl);
+    if (!source) throw httpError(422, "The public page could not be fetched without redirects, login or unsupported content.");
+  }
+
+  const evidenceText = [source?.title, source?.description, source?.excerpt, notes].filter(Boolean).join("\n");
+  const patterns = detectReusablePatterns(evidenceText);
+  const evidence = [
+    source?.title ? { kind: "page-title", claim: source.title, source_url: normalizedUrl } : null,
+    source?.description ? { kind: "page-description", claim: source.description.slice(0, 500), source_url: normalizedUrl } : null,
+    ...pickFacts(source?.excerpt || notes, 4).map((claim) => ({
+      kind: source ? "public-page-excerpt" : "user-description",
+      claim: claim.slice(0, 500),
+      source_url: normalizedUrl
+    }))
+  ].filter(Boolean);
+
+  return {
+    id: createId("scan"),
+    input_type: source ? "public-url" : "software-description",
+    source_url: normalizedUrl,
+    fetched_at: source ? new Date().toISOString() : "",
+    title: source?.title || notes.split(/\r?\n/)[0].slice(0, 120) || "Software concept",
+    description: source?.description || notes.slice(0, 500),
+    source_type: source?.sourceType || "user-description",
+    word_count: source?.wordCount || notes.split(/\s+/).filter(Boolean).length,
+    evidence,
+    reusable_patterns: patterns,
+    blueprint_seed: {
+      problem_signal: evidence[0]?.claim || "Turn the described user intent into a clear outcome.",
+      features: patterns.map((item) => item.blueprint_feature),
+      pages: uniqueList(patterns.flatMap((item) => item.suggested_pages)).slice(0, 8),
+      validation_questions: patterns.map((item) => item.validation_question)
+    },
+    legal_boundary: "Evidence records public product signals only. Rebuild the mechanism with original code, copy, branding and layout.",
+    limitations: source
+      ? ["No authenticated, redirected, private-network or script-rendered content was accessed.", "Visual screenshot interpretation is not performed by this URL scanner."]
+      : ["Claims come from the user-provided description and require validation.", "No external URL evidence was supplied."]
+  };
+}
+
+function detectReusablePatterns(text) {
+  const lowered = String(text || "").toLowerCase();
+  const catalog = [
+    { keys: ["dashboard", "overview", "analytics", "metric"], name: "Decision dashboard", feature: "Outcome-focused dashboard with saved state and clear next actions", pages: ["Dashboard", "Insights"], question: "Which three decisions must the dashboard help users make?" },
+    { keys: ["collabor", "team", "share", "comment"], name: "Collaborative workflow", feature: "Shared project planning, comments and explicit ownership", pages: ["Planning Studio", "Activity"], question: "Who can edit, approve and only view each project?" },
+    { keys: ["generate", "builder", "create", "editor"], name: "Guided builder", feature: "Guided creation workflow with editable output and preview", pages: ["Builder", "Preview"], question: "What is the smallest useful artifact the builder must produce?" },
+    { keys: ["export", "download", "publish", "deploy"], name: "Delivery pipeline", feature: "Validated export pipeline with honest target readiness", pages: ["Export Hub", "Release Board"], question: "Which export target is locally verifiable first?" },
+    { keys: ["ai", "agent", "assistant", "prompt"], name: "Agent-assisted iteration", feature: "Context-aware planning assistant with reviewable changes", pages: ["Agent Studio", "Plan Review"], question: "Which agent actions require explicit user approval?" },
+    { keys: ["account", "login", "profile", "user"], name: "Project ownership", feature: "User-owned projects and scoped access controls", pages: ["Account Center", "Projects"], question: "Which data belongs to a user, team or public project?" }
+  ];
+  const matches = catalog.filter((item) => item.keys.some((key) => lowered.includes(key)));
+  const selected = matches.length ? matches : [catalog[2], catalog[0]];
+  return selected.slice(0, 5).map((item) => ({
+    name: item.name,
+    evidence_basis: item.keys.filter((key) => lowered.includes(key)).slice(0, 4),
+    blueprint_feature: item.feature,
+    suggested_pages: item.pages,
+    validation_question: item.question
+  }));
+}
+
 async function fetchPublicPage(url) {
   try {
     await assertPublicWebUrl(url);
@@ -1677,10 +1839,11 @@ async function fetchPublicPage(url) {
     });
     if (!response.ok) return null;
     const contentType = response.headers.get("content-type") || "";
+    if (contentType && !/(text\/|html|xml|json)/i.test(contentType)) return null;
     const sourceType = contentType.includes("xml") ? "feed" : contentType.includes("html") ? "html" : "document";
-    const text = await response.text();
+    const text = await readLimitedResponseText(response, 400000);
     if (!text) return null;
-    const html = text.slice(0, 400000);
+    const html = text;
     const title = extractTitle(html) || new URL(url).hostname;
     const description = extractDescription(html);
     const cleanText = cleanHtmlText(html);
@@ -2267,6 +2430,8 @@ function normalizeWebUrl(value, base = "") {
 async function assertPublicWebUrl(value) {
   const parsed = normalizeWebUrl(value);
   if (!parsed) throw httpError(400, "Only public HTTP(S) URLs are allowed.");
+  if (parsed.username || parsed.password) throw httpError(400, "URLs with embedded credentials are not allowed.");
+  if (parsed.port && !["80", "443"].includes(parsed.port)) throw httpError(400, "Only standard public web ports are allowed.");
   const hostname = parsed.hostname.toLowerCase();
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     throw httpError(400, "Local URLs are not allowed.");
@@ -2277,6 +2442,23 @@ async function assertPublicWebUrl(value) {
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
     throw httpError(400, "Private network URLs are not allowed.");
   }
+}
+
+async function readLimitedResponseText(response, maxBytes) {
+  const reader = response.body?.getReader();
+  if (!reader) return (await response.text()).slice(0, maxBytes);
+  const chunks = [];
+  let size = 0;
+  while (size < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const remaining = maxBytes - size;
+    chunks.push(value.slice(0, remaining));
+    size += Math.min(value.length, remaining);
+    if (value.length > remaining) break;
+  }
+  await reader.cancel().catch(() => {});
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function isPrivateAddress(address) {
@@ -2312,6 +2494,10 @@ function normalizeList(value) {
     .split(/[\n,;]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function uniqueList(items) {
+  return [...new Set((items || []).filter(Boolean))];
 }
 
 function clampNumber(value, min, max, fallback) {

@@ -150,6 +150,7 @@ function cacheElements() {
     workspaceFileLabel: document.querySelector("#workspaceFileLabel"),
     workspaceEditor: document.querySelector("#workspaceEditor"),
     workspaceSaveFile: document.querySelector("#workspaceSaveFile"),
+    workspacePreviewButton: document.querySelector("#workspacePreviewButton"),
     workspaceRuns: document.querySelector("#workspaceRuns"),
     workspaceActivity: document.querySelector("#workspaceActivity"),
     auditHero: document.querySelector("#auditHero"),
@@ -213,6 +214,7 @@ function wireEvents() {
   els.trainingForm?.addEventListener("submit", handleTrainingSubmit);
   els.workspaceCreateForm?.addEventListener("submit", createCodingWorkspace);
   els.workspaceSaveFile?.addEventListener("click", saveWorkspaceFile);
+  els.workspacePreviewButton?.addEventListener("click", openWorkspacePreview);
   document.querySelectorAll("[data-workspace-command]").forEach((button) => {
     button.addEventListener("click", () => runWorkspaceLoop(button.dataset.workspaceCommand));
   });
@@ -247,7 +249,7 @@ function routeTo(route) {
   renderAll();
 }
 
-function handleAnalysisSubmit(event) {
+async function handleAnalysisSubmit(event) {
   event.preventDefault();
   const url = els.targetUrl.value.trim();
   const text = els.targetText.value.trim();
@@ -272,7 +274,13 @@ function handleAnalysisSubmit(event) {
     return;
   }
 
-  const report = createAnalysisReport(target, analysisType);
+  let scan = null;
+  if (api.available && (url || text)) {
+    toast(url ? "Scanning public evidence safely..." : "Structuring software description...");
+    const response = await apiPost("/api/scan", { url, text, analysisType });
+    scan = response?.scan || null;
+  }
+  const report = createAnalysisReport(target, analysisType, scan);
   const blueprint = createBlueprintFromReport(report);
   const response = rickAnalysisText(report, blueprint);
   addChatMessage("user", `${analysisType}: ${target.title}`);
@@ -283,7 +291,7 @@ function handleAnalysisSubmit(event) {
   clearInputs();
   renderAll();
   routeTo("chat");
-  toast("Rick-C63 generated a legal analysis, blueprint and action cards.");
+  toast(scan ? "Evidence-backed scan, blueprint and action cards generated." : "Fallback analysis, blueprint and action cards generated.");
 }
 
 function handleFilePreview() {
@@ -387,10 +395,10 @@ function createTarget({ url = "", text = "", file = null, inputType = "Text Idea
   return target;
 }
 
-function createAnalysisReport(target, analysisType) {
+function createAnalysisReport(target, analysisType, scan = null) {
   const now = new Date().toISOString();
   const concept = target.title;
-  const metadata = fetchPublicPageMetadata(target.url);
+  const metadata = scan || fetchPublicPageMetadata(target.url);
   const imageSignals = analyzeImagePlaceholder(target.uploaded_file_name || target.uploaded_file_type || target.uploaded_file_url);
   const textSignals = analyzeTextIdea(target.text_input || analysisType);
   const archetype = inferProductArchetype(`${target.url} ${target.text_input} ${analysisType}`);
@@ -398,10 +406,10 @@ function createAnalysisReport(target, analysisType) {
   const report = {
     id: id("report"),
     target_id: target.id,
-    summary: `${concept} looks like a ${textSignals.category} in the ${archetype.label} zone: it turns a messy user intention into a guided result. ${metadata.description}`,
+    summary: `${concept} looks like a ${textSignals.category} in the ${archetype.label} zone: it turns a messy user intention into a guided result. ${metadata.description || ""}`,
     purpose: archetype.purpose,
     target_audience: archetype.audience,
-    visible_features: [...archetype.features, "Outcome framing", ...imageSignals],
+    visible_features: uniqueList([...(scan?.blueprint_seed?.features || []), ...archetype.features, "Outcome framing", ...imageSignals]),
     design_style: archetype.design || buildDesignStyle(target.title, target.text_input),
     business_model: archetype.business || buildBusinessModel(target.title, target.text_input),
     strengths: archetype.strengths,
@@ -409,6 +417,10 @@ function createAnalysisReport(target, analysisType) {
     legal_risks: ["Exact brand imitation", "Logo or name copying", "Copying protected text", "Cloning code or layout pixel-for-pixel", "Unauthorized scraping or private data access"],
     do_not_copy: ["Protected logos", "Protected names", "Exact page layout", "Source code", "Copyrighted copy", "Private data", "Access-control bypasses"],
     legal_inspiration_points: ["General workflow", "Problem category", "User journey logic", "Publicly visible feature pattern", "Business model mechanics", "Interaction principles"],
+    evidence: scan?.evidence || [],
+    reusable_patterns: scan?.reusable_patterns || [],
+    scan_limitations: scan?.limitations || ["Fallback analysis was used; public source evidence was not fetched."],
+    source_scan: scan ? { id: scan.id, source_url: scan.source_url, fetched_at: scan.fetched_at, word_count: scan.word_count, legal_boundary: scan.legal_boundary } : null,
     upgrade_opportunities: ideas.upgrades,
     nemesis_upgrade_idea: ideas.nemesis,
     suggested_names: ideas.names,
@@ -441,9 +453,9 @@ function createBlueprintFromReport(report) {
     tagline: "Understand the mechanism. Rebuild the legal core. Generate the first software version.",
     problem: report.purpose,
     target_user: report.target_audience,
-    features: report.mvp_plan,
+    features: uniqueList([...(report.reusable_patterns || []).map((item) => item.blueprint_feature), ...report.mvp_plan]).slice(0, 9),
     premium_features: report.empire_plan,
-    frontend_pages: buildFrontendPages(report),
+    frontend_pages: uniqueList([...(report.reusable_patterns || []).flatMap((item) => item.suggested_pages || []), ...buildFrontendPages(report)]).slice(0, 8),
     backend_services: buildBackendServices(report),
     database_schema: schema,
     api_routes: ["/api/targets", "/api/analyze", "/api/chat", "/api/legal-check", "/api/reports", "/api/blueprints", "/api/empire-projects", "/api/export-prompt"],
@@ -1130,7 +1142,7 @@ async function initializeBackend() {
     }
   }
   if (api.available) {
-    const sync = await apiPost("/api/db/sync", { db: state });
+    const sync = await apiGet("/api/db");
     if (sync?.db) {
       state.targets = sync.db.targets || state.targets;
       state.reports = sync.db.reports || state.reports;
@@ -1219,7 +1231,7 @@ function buildProjectAudit(health, doctor) {
         title: "Missing to finish",
         tone: "work",
         items: [
-          "Replace demo analysis with a stronger local model pipeline once Ollama is consistently available.",
+          "Connect an explicit vision model before claiming semantic screenshot analysis.",
           "Add repo-level project roadmap and issue backlog so every feature has a finish line.",
           "Add backup/export controls for data/erleuchtung-db.json.",
           "Add dedicated integration tests for Training and native EXE export on a fully provisioned machine.",
@@ -1228,7 +1240,7 @@ function buildProjectAudit(health, doctor) {
       }
     ],
     nextSteps: [
-      "Add provisioned-machine coverage for Training and native EXE export.",
+      "Add provisioned-machine coverage for Training, native EXE export and external engine toolchains.",
       "Add a persistent Roadmap page or backlog JSON for the finish-one-by-one workflow.",
       "Make the Audit page able to trigger the self-healing doctor script from admin mode.",
       "Add automated backups for the local database.",
@@ -2041,6 +2053,7 @@ async function handleTrainingSubmit(event) {
     toast("Backend offline. Start node server.js to run the automation.");
     return;
   }
+  if (!(await requireAdminAccess("Training-Automation starten"))) return;
   const createResponse = await apiPost("/api/training/jobs", { job: payload });
   if (!createResponse?.ok || !createResponse.job) {
     toast("Training job could not be created.");
@@ -2091,6 +2104,7 @@ async function runTrainingJob(jobId) {
     toast("Backend offline. Training jobs need the local server.");
     return;
   }
+  if (!(await requireAdminAccess("Training-Job ausführen"))) return;
   const response = await apiPost(`/api/training/jobs/${jobId}/run`, { options: {} });
   if (!response?.ok || !response.job) {
     toast("Training run failed.");
@@ -2108,6 +2122,7 @@ async function exportTrainingJob(jobId) {
     toast("Backend offline. Export needs the local server.");
     return;
   }
+  if (!(await requireAdminAccess("Training-Paket exportieren"))) return;
   const response = await apiPost(`/api/training/jobs/${jobId}/export`, {});
   if (!response?.ok || !response.job) {
     toast("Training export failed.");
@@ -2125,6 +2140,7 @@ async function launchTrainingJob(jobId) {
     toast("Backend offline. Hugging Face launch needs the local server.");
     return;
   }
+  if (!(await requireAdminAccess("Hugging Face Job starten"))) return;
   const response = await apiPost(`/api/training/jobs/${jobId}/hf-launch`, { options: {} });
   if (!response?.ok || !response.job) {
     toast("Hugging Face launch failed.");
@@ -2357,6 +2373,9 @@ function fullReportCard(report) {
     ${reportSection("Legal risk areas", report.legal_risks)}
     ${reportSection("What not to copy", report.do_not_copy)}
     ${reportSection("Legal inspiration points", report.legal_inspiration_points)}
+    ${reportSection("Evidence", (report.evidence || []).map((item) => `${item.kind}: ${item.claim}${item.source_url ? ` (${item.source_url})` : ""}`))}
+    ${reportSection("Reusable evidence-backed patterns", (report.reusable_patterns || []).map((item) => `${item.name}: ${item.blueprint_feature}`))}
+    ${reportSection("Scan limitations", report.scan_limitations || [])}
     ${reportSection("Upgrade opportunities", report.upgrade_opportunities)}
     ${reportSection("New original concept", [report.nemesis_upgrade_idea])}
     ${reportSection("Suggested app/module names", report.suggested_names)}
@@ -2396,6 +2415,11 @@ async function createCodingWorkspace(event) {
   event.preventDefault();
   if (!(await requireAdminAccess("Workspace erstellen"))) return;
   const name = els.workspaceName.value.trim() || getCurrentBlueprint()?.project_name || "New Coding Workspace";
+  const sync = await apiPost("/api/db/sync", { db: state });
+  if (!sync?.ok) {
+    toast("Project state could not be synchronized before workspace creation.");
+    return;
+  }
   const response = await apiPost("/api/workspaces", {
     name,
     project_id: els.workspaceProject.value,
@@ -2443,7 +2467,11 @@ function renderWorkspaces() {
   els.workspaceOverview.innerHTML = `
     <div><span class="status-badge ${current.status === "verified" ? "complete" : "running"}">${safe(current.status)}</span>
     <h3>${safe(current.name)}</h3><p>${safe(current.adapter_label || current.adapter)} / ${safe(current.adapter_status)}</p></div>
-    <div class="workspace-capabilities"><strong>Capabilities</strong>${list(current.capabilities || [])}<strong>Limits</strong>${list(current.limits || [])}</div>`;
+    <div class="workspace-capabilities"><strong>Capabilities</strong>${list(current.capabilities || [])}<strong>Readiness: ${safe(current.readiness?.level || "unknown")}</strong>${list((current.readiness?.checks || []).map((item) => `${item.label}: ${item.status} - ${item.detail}`))}<strong>Limits</strong>${list(current.limits || [])}</div>`;
+  if (els.workspacePreviewButton) {
+    els.workspacePreviewButton.disabled = !current.preview_url;
+    els.workspacePreviewButton.title = current.readiness?.preview?.detail || "";
+  }
   const tree = current.tree || [];
   els.workspaceTree.innerHTML = tree.length ? tree.map((item) => item.type === "directory"
     ? `<div class="workspace-directory">${safe(item.path)}/</div>`
@@ -2471,6 +2499,15 @@ async function openWorkspaceFile(path) {
   state.currentWorkspaceFile = response.path;
   els.workspaceFileLabel.textContent = response.path;
   els.workspaceEditor.value = response.content;
+}
+
+function openWorkspacePreview() {
+  const workspace = getCurrentWorkspace();
+  if (!workspace?.preview_url) {
+    toast("This adapter has no browser preview. Review its external toolchain requirements.");
+    return;
+  }
+  openModal(`${workspace.name} Preview`, `<iframe class="workspace-preview-frame" src="${safe(workspace.preview_url)}" title="${safe(workspace.name)} preview" sandbox="allow-scripts"></iframe>`);
 }
 
 async function saveWorkspaceFile() {
