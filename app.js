@@ -24,6 +24,17 @@ const api = {
   doctor: null
 };
 
+const MODEL_CATALOG = [
+  { id: "codex", label: "GPT-5.4 Codex", provider: "OpenAI", tier: "Pro", role: "Best coding / flagship", free: false },
+  { id: "premium", label: "GPT-5.4 Mini", provider: "OpenAI", tier: "Paid", role: "Strong allrounder", free: false },
+  { id: "komplex", label: "Codestral Latest", provider: "Mistral", tier: "Paid", role: "Coding specialist", free: false },
+  { id: "code", label: "Qwen3 Coder", provider: "OpenRouter", tier: "Free", role: "Best free coding", free: true },
+  { id: "fast", label: "Gemini 2.5 Flash Lite", provider: "Google", tier: "Free", role: "Fast free allrounder", free: true },
+  { id: "oss", label: "GPT-OSS 120B", provider: "OpenRouter", tier: "Free", role: "Large free reasoning", free: true },
+  { id: "laguna", label: "Laguna M.1", provider: "OpenRouter", tier: "Free", role: "Strong free builder", free: true },
+  { id: "ultra", label: "Nemotron Ultra 550B", provider: "OpenRouter", tier: "Free", role: "Big free reasoning", free: true }
+];
+
 const buildTargets = [
   { id: "web-app", label: "Web App", level: "Buildable now", tone: "ready", output: "Working responsive web app + ZIP" },
   { id: "pwa", label: "PWA / Mobile Web", level: "Buildable now", tone: "ready", output: "Installable-ready web foundation + ZIP" },
@@ -113,6 +124,8 @@ const defaultState = {
   currentWorkspaceFile: "",
   projectAudit: null,
   builderTarget: "web-app",
+  selectedMainModel: "codex",
+  selectedCodingModel: "codex",
   adminSecurity: {
     configured: false,
     token: "",
@@ -964,6 +977,10 @@ function generateProductPackage(blueprint, report, prompt = "") {
     type: target.label,
     buildTarget: target,
     deliveryLevel: target.level,
+    modelSelection: {
+      main: getModelById(state.selectedMainModel),
+      coding: getModelById(state.selectedCodingModel)
+    },
     pitch: `${name} is a saved software product concept that turns ${report.summary.toLowerCase()} Rick-C63 keeps it legal, buildable and connected to your Empire system.`,
     versions: [
       { name: "MVP", summary: blueprint.features.slice(0, 4).join(", ") },
@@ -1027,7 +1044,7 @@ function buildStarterFiles(slug, blueprint, report, prompt) {
 }
 
 async function generateProductBuild() {
-  if (!(await requireAdminAccess("Software-Generierung"))) return;
+  if (api.available && !(await requireAdminAccess("Software-Generierung"))) return;
   const report = getCurrentReport();
   const blueprint = getCurrentBlueprint() || createBlueprintFromReport(report);
   if (!report || !blueprint) {
@@ -1052,33 +1069,156 @@ async function generateProductBuild() {
   if (api.available) {
     const response = await apiPost("/api/product/build", { product });
     build = response?.build || null;
-    if (build) {
-      product.build = build;
-      saveProductPackage(product, blueprint, report);
-    }
+  } else {
+    build = createLocalGeneratedBuild(product);
+  }
+  if (build) {
+    product.build = build;
+    saveProductPackage(product, blueprint, report);
   }
   const html = renderProductPackage(product);
-  const buildHtml = build ? renderBuildResult(build) : "<p>Frontend-only mode: Produktpaket gespeichert. Starte den Backend-Server, damit echte Software erzeugt wird.</p>";
+  const buildHtml = build ? renderBuildResult(build) : "<p>Build fehlgeschlagen.</p>";
   els.builderOutput.innerHTML = `${html}${buildHtml}`;
   wireBuildPreviewButtons(els.builderOutput);
   openModal("Rick-C63 Software Generator", `${html}${buildHtml}`);
   wireBuildPreviewButtons(els.modalBody);
-  toast(build ? (build.status === "ready" ? "Software generiert. Du kannst sie jetzt öffnen." : "Preview-Scaffold generiert. Echte Ziel-Binaries brauchen weiter die passende Toolchain.") : "Produktpaket gespeichert. Backend starten fuer echte Software.");
+  toast(build?.status === "ready"
+    ? (build.mode === "browser-standalone" ? "Fertige Standalone-App im Browser gebaut." : "Software generiert. Du kannst sie jetzt öffnen.")
+    : "Preview-Scaffold generiert. Echte Ziel-Binaries brauchen weiter die passende Toolchain.");
 }
 
 function renderBuildResult(build) {
   const ready = build.status === "ready";
+  const openLabel = ready ? "Open Software" : "Open Preview Package";
+  const downloadButton = build.downloadUrl
+    ? `<a class="secondary-button" href="${build.downloadUrl}" download="${safe(build.downloadName || "generated-app.html")}">Download App</a>`
+    : "";
   return `<div class="builder-output">
     <h4>${ready ? "Fertige Software" : "Preview + Scaffold"}</h4>
     <p>${safe(build.detail || (ready ? "Rick-C63 hat eine direkt öffnbare App gebaut." : "Rick-C63 hat ein ehrliches Vorschau-/Scaffold-Paket gebaut."))}</p>
     <div class="button-row">
-      <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">${ready ? "Open Software" : "Open Preview Package"}</a>
+      <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">${openLabel}</a>
       <button class="secondary-button" data-preview-url="${build.url}">Preview Here</button>
+      ${downloadButton}
     </div>
     <p><strong>Build-Typ:</strong> ${safe(build.label || build.status || "preview")}</p>
-    <p><strong>Ordner:</strong> ${build.dir}</p>
-    <p><strong>Start:</strong> ${build.entry}</p>
+    <p><strong>Ordner:</strong> ${safe(build.dir || "browser-memory")}</p>
+    <p><strong>Start:</strong> ${safe(build.entry || "in-browser")}</p>
   </div>`;
+}
+
+function createLocalGeneratedBuild(product) {
+  const standalone = createStandaloneGeneratedApp(product);
+  return {
+    status: "ready",
+    label: "Standalone generated app",
+    detail: "Die App wurde komplett im Browser gebaut: direkt öffnbar, speicherbar und ohne lokalen Node-Server benutzbar. Backend-only Extras wie Training/Admin-Sync bleiben separat.",
+    mode: "browser-standalone",
+    dir: "browser-memory",
+    entry: `${product.slug || 'generated-app'}.html`,
+    url: standalone.url,
+    downloadUrl: standalone.url,
+    downloadName: standalone.filename
+  };
+}
+
+function createStandaloneGeneratedApp(product) {
+  const expanded = expandGeneratedProduct(product);
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(expanded.name)}</title>
+  <style>${standaloneProductCss(expanded)}</style>
+</head>
+<body>
+  <div class="cosmos"></div>
+  <header>
+    <strong>${escapeHtml(expanded.name)}</strong>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Generated by Rick-C63</p>
+      <h1>${escapeHtml(expanded.name)}</h1>
+      <p>${escapeHtml(expanded.pitch || "Generated software product.")}</p>
+      <p class="delivery">${escapeHtml(expanded.buildTarget?.label || expanded.type || "Web App")} / Complete standalone app</p>
+      <div class="actions">
+        <button id="saveProject">Save Project</button>
+        <button id="generatePlan">Generate Plan</button>
+        <button id="exportSummary">Export JSON</button>
+      </div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="workspace">
+      <aside>
+        <h2>Screens</h2>
+        <div id="screens"></div>
+      </aside>
+      <section>
+        <h2>Live Builder</h2>
+        <label>Project note<textarea id="note" rows="5" placeholder="Describe the next feature..."></textarea></label>
+        <button id="addNote">Add Note</button>
+        <div id="notes"></div>
+      </section>
+    </section>
+    <section>
+      <h2>Modules</h2>
+      <div id="modules"></div>
+    </section>
+  </main>
+  <script>${standaloneProductJs(expanded).replaceAll('</script>', '<\\/script>')}</script>
+</body>
+</html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  return {
+    filename: `${expanded.slug || 'generated-app'}.html`,
+    url: URL.createObjectURL(blob)
+  };
+}
+
+function expandGeneratedProduct(product) {
+  const slug = String(product.slug || product.name || "generated-app")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "generated-app";
+  const seed = hashString(`${product.name} ${product.pitch}`);
+  const palettes = [
+    { bg: "#061019", accent: "#53ff9d", second: "#1dbdff", third: "#ff3edb" },
+    { bg: "#100813", accent: "#ffd166", second: "#8d5cff", third: "#53ff9d" },
+    { bg: "#070b1c", accent: "#1dbdff", second: "#ff5a7a", third: "#ffd166" },
+    { bg: "#08120d", accent: "#53ff9d", second: "#ffd166", third: "#1dbdff" }
+  ];
+  const palette = palettes[seed % palettes.length];
+  const modules = product.modules?.length ? product.modules : ["Intake", "Generator", "Memory", "Dashboard"];
+  const pages = product.pages?.length ? product.pages : ["Dashboard", "Generator", "Projects"];
+  const features = modules.slice(0, 6).map((module, index) => ({
+    id: `feature-${index + 1}`,
+    title: module,
+    description: `A working ${module.toLowerCase()} module connected to ${product.name}.`,
+    status: index < 2 ? "ready" : "next"
+  }));
+  return {
+    ...product,
+    slug,
+    palette,
+    features,
+    appStateKey: `generated-${slug}`,
+    screens: pages.map((page, index) => ({
+      name: page,
+      purpose: index === 0 ? "Main command center" : `Focused ${page.toLowerCase()} workspace`
+    }))
+  };
+}
+
+function standaloneProductCss(product) {
+  const palette = product.palette || { bg: "#050610", accent: "#53ff9d", second: "#1dbdff", third: "#ff3edb" };
+  return `:root{--bg:${palette.bg};--accent:${palette.accent};--second:${palette.second};--third:${palette.third};--text:#f3fbff;--muted:#a9b8c9;--panel:rgba(255,255,255,.07);--line:rgba(155,231,255,.22)}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 10%,color-mix(in srgb,var(--second) 28%,transparent),transparent 30%),radial-gradient(circle at 80% 0,color-mix(in srgb,var(--third) 22%,transparent),transparent 24%),var(--bg);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif}.cosmos{position:fixed;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,.75) 0 1px,transparent 1px);background-size:120px 120px;opacity:.22;animation:drift 34s linear infinite}header{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}nav{display:flex;gap:8px;overflow:auto}nav button,.actions button,#addNote{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:10px 12px;font-weight:800}main{width:min(1180px,calc(100% - 28px));margin:0 auto;padding:38px 0 70px}.hero{min-height:360px;display:grid;align-content:center}.eyebrow{color:var(--accent);font-weight:900;text-transform:uppercase;letter-spacing:.08em}h1{max-width:980px;margin:.1em 0;font-size:clamp(42px,9vw,96px);line-height:.94;letter-spacing:0}h2{margin:0 0 14px}.hero p{max-width:760px;color:#dceeff;font-size:20px;line-height:1.55}.actions{display:flex;flex-wrap:wrap;gap:10px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card,.workspace>aside,.workspace>section,main>section:not(.hero):not(.grid){border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 20px 80px rgba(0,0,0,.28);padding:18px}.workspace{display:grid;grid-template-columns:320px 1fr;gap:14px;margin-top:14px}.screen,.module,.note{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:rgba(0,0,0,.18)}textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.32);color:var(--text);padding:12px;margin:8px 0 10px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:900}@media(max-width:800px){header{display:grid}.grid,.workspace{grid-template-columns:1fr}h1{font-size:clamp(38px,16vw,70px)}}@keyframes drift{to{transform:translate(-120px,120px)}}`;
+}
+
+function standaloneProductJs(product) {
+  return `const product=${JSON.stringify(product)};const stateKey=product.appStateKey;const saved=JSON.parse(localStorage.getItem(stateKey)||'{"notes":[],"saves":0}');const $=(id)=>document.querySelector(id);const escape=(value)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');$('#nav').innerHTML=product.screens.map(s=>'<button>'+escape(s.name)+'</button>').join('');$('#metrics').innerHTML=[['Versions',product.versions.length],['Modules',product.modules.length],['Saved',saved.saves||0]].map(([k,v])=>'<div class="card"><span class="status">'+k+'</span><h2>'+v+'</h2></div>').join('');$('#screens').innerHTML=product.screens.map(s=>'<div class="screen"><strong>'+escape(s.name)+'</strong><p>'+escape(s.purpose)+'</p></div>').join('');$('#modules').innerHTML=product.features.map(f=>'<div class="module"><span class="status">'+escape(f.status)+'</span><h3>'+escape(f.title)+'</h3><p>'+escape(f.description)+'</p></div>').join('');function renderNotes(){ $('#notes').innerHTML=saved.notes.map(n=>'<div class="note">'+escape(n)+'</div>').join('') || '<p>No notes yet.</p>'; }renderNotes();$('#addNote').addEventListener('click',()=>{ const value=$('#note').value.trim(); if(!value)return; saved.notes.unshift(value); $('#note').value=''; localStorage.setItem(stateKey,JSON.stringify(saved)); renderNotes();});$('#saveProject').addEventListener('click',()=>{ saved.saves=(saved.saves||0)+1; localStorage.setItem(stateKey,JSON.stringify(saved)); location.reload();});$('#generatePlan').addEventListener('click',()=>{ const plan=product.buildPhases.map((p,i)=>(i+1)+'. '+p).join('\\n'); saved.notes.unshift('Generated plan:\\n'+plan); localStorage.setItem(stateKey,JSON.stringify(saved)); renderNotes();});$('#exportSummary').addEventListener('click',()=>{ const blob=new Blob([JSON.stringify(product,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=product.slug+'-product.json'; a.click(); });`;
 }
 
 function wireBuildPreviewButtons(root) {
@@ -1128,12 +1268,20 @@ function openExportHub() {
 }
 
 async function exportCurrentProject(product) {
-  if (!(await requireAdminAccess("Projekt-Export"))) return;
+  if (api.available && !(await requireAdminAccess("Projekt-Export"))) return;
   const checked = [...document.querySelectorAll(".export-hub input:checked")].map((input) => input.value);
   const result = document.querySelector("#exportResult");
   result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der Realität wackeln.</p>";
   if (!api.available) {
-    result.innerHTML = "<p>Backend ist nicht online. Starte <code>npm start</code>, dann kann Rick-C63 ZIPs bauen.</p>";
+    const bundle = await createStandalonePwaBundle(product, checked);
+    downloadBlob(bundle.filename, bundle.blob, bundle.mimeType);
+    result.innerHTML = `<div class="builder-output">
+      <h4>PWA-Paket bereit</h4>
+      <p>Standalone-Export gebaut. Dieses ZIP kannst du direkt fuer PWABuilder verwenden.</p>
+      <p><strong>Datei:</strong> ${safe(bundle.filename)}</p>
+      <p><strong>Enthalten:</strong> index.html, app.js, styles.css, manifest.webmanifest, sw.js, icons, product.json</p>
+    </div>`;
+    toast("PWA-Export fuer PWABuilder heruntergeladen.");
     return;
   }
   const response = await apiPost("/api/export/project", { product, formats: checked });
@@ -1281,7 +1429,7 @@ async function refreshAudit() {
   state.projectAudit = buildProjectAudit(null, null);
   saveState();
   renderAll();
-  toast("Backend offline. Showing static audit.");
+  toast("Standalone mode aktiv. Live-Backend-Audit ist gerade nicht verbunden.");
 }
 
 function buildProjectAudit(health, doctor) {
@@ -1294,7 +1442,7 @@ function buildProjectAudit(health, doctor) {
   const issues = Array.isArray(doctor?.issues) ? doctor.issues : [];
   const repairs = Array.isArray(doctor?.repairs) ? doctor.repairs : [];
   const hardIssues = [
-    !backendOnline ? "Backend is offline when the page is opened as a static file." : "",
+    !backendOnline ? "This session is running in standalone mode. Core UI/build flow still works, but live admin/training sync is unavailable until the local server responds." : "",
     !ollamaReady ? "Local Ollama/Rick-C63 model is not reachable; AI planning falls back to canned local logic." : "",
     "Training and native EXE export still depend on external runtimes and should be verified on every target machine.",
     "Frontend state and backend JSON sync are useful for MVP, but not enough for multi-user production."
@@ -1302,10 +1450,10 @@ function buildProjectAudit(health, doctor) {
   return {
     checked_at: doctor?.checked_at || new Date().toISOString(),
     score: backendOnline && ollamaReady && doctorOk && !issues.length ? 90 : backendOnline ? (doctorAvailable ? 76 : 72) : 58,
-    status: backendOnline ? "Running locally" : "Static fallback",
+    status: backendOnline ? "Running locally" : "Standalone mode",
     summary: backendOnline
       ? "The local Node app is reachable, browser UI can talk to the backend, and the project is ready for feature hardening."
-      : "The frontend can render without the server, but real audit, training, export and AI routes need npm start.",
+      : "The app still works in standalone mode and can generate complete browser apps, while live audit/training/admin routes wait for the local server.",
     health: [
       { label: "Node server", value: nodeReady ? "Ready" : "Offline", ok: nodeReady },
       { label: "Browser app", value: "Ready", ok: true },
@@ -1727,7 +1875,8 @@ function renderContext() {
   const memories = (state.memories || []).slice(0, 5);
   els.contextPanel.innerHTML = `
     <div class="mini-card"><h3>User</h3><p>${safe(state.user.name)} / ${safe(state.user.plan)}</p></div>
-    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} / Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} / ${safe(api.health?.ollama?.model || "qwen3-coder:30b")}</p></div>
+    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Standalone mode"} / Ollama ${api.health?.ollama?.reachable ? "connected" : "optional"} / ${safe(api.health?.ollama?.model || "qwen3-coder:30b")}</p></div>
+    <div class="mini-card"><h3>Model stack</h3><p>Main: ${safe(getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex")}<br>Coding: ${safe(getModelById(state.selectedCodingModel)?.label || "GPT-5.4 Codex")}</p></div>
     <div class="mini-card"><h3>Current Target</h3><p>${safe(target ? target.title : "No target selected")}</p></div>
     <div class="mini-card"><h3>Current Report</h3><p>${safe(report ? report.summary : "No report yet")}</p></div>
     <div class="mini-card"><h3>Training Job</h3><p>${safe(trainingJob ? `${trainingJob.topic} / ${trainingJob.status}` : "No training job selected")}</p></div>
@@ -1969,20 +2118,51 @@ function renderBuilderSettings() {
       <strong>${escapeHtml(target.label)} · ${escapeHtml(target.output)}</strong>
       <p>${escapeHtml(guidance.text)}</p>
     </div>
+    <label>Main model<select id="builderMainModel">
+      ${MODEL_CATALOG.map((item) => `<option value="${item.id}" ${state.selectedMainModel === item.id ? "selected" : ""}>${item.label} · ${item.provider} · ${item.tier}</option>`).join("")}
+    </select></label>
+    <label>Coding model<select id="builderCodingModel">
+      ${MODEL_CATALOG.map((item) => `<option value="${item.id}" ${state.selectedCodingModel === item.id ? "selected" : ""}>${item.label} · ${item.provider} · ${item.tier}</option>`).join("")}
+    </select></label>
+    <div class="button-row">
+      <button class="secondary-button" type="button" id="presetFreeOnly">Free only preset</button>
+      <button class="secondary-button" type="button" id="presetBestQuality">Best quality preset</button>
+    </div>
     <label>Feeling<select id="builderFeeling">
       ${["Cosmic premium", "Developer cockpit", "Creative studio", "Conversion machine", "Learning engine"].map((item) => `<option ${state.builderFeeling === item ? "selected" : ""}>${item}</option>`).join("")}
     </select></label>
+    <div class="delivery-honesty ready">
+      <span class="status-badge ready">Model choices</span>
+      <strong>Main: ${escapeHtml(getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex")}</strong>
+      <p>Coding: ${escapeHtml(getModelById(state.selectedCodingModel)?.label || "GPT-5.4 Codex")}. Codex ist standardmäßig gesetzt; dazu 5 starke Free-Modelle plus weitere Premium-Optionen.</p>
+    </div>
     <button class="secondary-button full-width" id="applyBuilderSettings">Apply Rick-C63 Settings</button>
   `;
+  document.querySelector("#presetFreeOnly").addEventListener("click", () => {
+    document.querySelector("#builderMainModel").value = "oss";
+    document.querySelector("#builderCodingModel").value = "code";
+    toast("Free-only Preset gesetzt.");
+  });
+  document.querySelector("#presetBestQuality").addEventListener("click", () => {
+    document.querySelector("#builderMainModel").value = "codex";
+    document.querySelector("#builderCodingModel").value = "codex";
+    toast("Best-quality Preset gesetzt.");
+  });
   document.querySelector("#applyBuilderSettings").addEventListener("click", () => {
     blueprint.project_name = document.querySelector("#builderAppName").value.trim() || blueprint.project_name;
     blueprint.problem = document.querySelector("#builderGoal").value.trim() || blueprint.problem;
     state.builderTarget = document.querySelector("#builderTarget").value;
+    state.selectedMainModel = document.querySelector("#builderMainModel").value;
+    state.selectedCodingModel = document.querySelector("#builderCodingModel").value;
     state.builderFeeling = document.querySelector("#builderFeeling").value;
     saveState();
     renderAll();
     toast("Builder-Einstellungen gespeichert.");
   });
+}
+
+function getModelById(id) {
+  return MODEL_CATALOG.find((item) => item.id === id) || MODEL_CATALOG[0];
 }
 
 function renderBlueprintEditor() {
@@ -2930,12 +3110,236 @@ function toast(message) {
 
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/plain" });
+  downloadBlob(filename, blob, "text/plain");
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function createStandalonePwaBundle(product, formats = ["web"]) {
+  const expanded = expandGeneratedProduct(product);
+  const icon192 = createPngIconDataUrl(expanded, 192);
+  const icon512 = createPngIconDataUrl(expanded, 512);
+  const files = {
+    "index.html": standalonePwaHtml(expanded),
+    "app.js": standaloneProductJs(expanded),
+    "styles.css": standaloneProductCss(expanded),
+    "manifest.webmanifest": JSON.stringify({
+      name: expanded.name,
+      short_name: expanded.name.slice(0, 24),
+      description: expanded.pitch || "Generated app",
+      start_url: "./index.html",
+      scope: "./",
+      display: "standalone",
+      background_color: expanded.palette?.bg || "#050610",
+      theme_color: expanded.palette?.bg || "#050610",
+      icons: [
+        { src: "icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: "icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ]
+    }, null, 2),
+    "sw.js": standalonePwaServiceWorker(),
+    "product.json": JSON.stringify(expanded, null, 2),
+    "README-PWABUILDER.txt": `PWABuilder upload package for ${expanded.name}.\n\nOpen or host these files and point PWABuilder at the app URL.\nFormats requested: ${formats.join(", ")}.\n`
+  };
+  const binaryFiles = {
+    "icons/icon-192.png": dataUrlToUint8Array(icon192),
+    "icons/icon-512.png": dataUrlToUint8Array(icon512)
+  };
+  const zip = createBrowserZip(files, binaryFiles);
+  return {
+    filename: `${expanded.slug || "generated-app"}-pwabuilder-upload.zip`,
+    blob: new Blob([zip], { type: "application/zip" }),
+    mimeType: "application/zip"
+  };
+}
+
+function standalonePwaHtml(product) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="${escapeHtml(product.palette?.bg || "#050610")}">
+  <meta name="description" content="${escapeHtml(product.pitch || "Generated app")}">
+  <title>${escapeHtml(product.name)}</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="cosmos"></div>
+  <header>
+    <strong>${escapeHtml(product.name)}</strong>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Generated by Rick-C63</p>
+      <h1>${escapeHtml(product.name)}</h1>
+      <p>${escapeHtml(product.pitch || "Generated software product.")}</p>
+      <p class="delivery">PWA / Complete standalone app</p>
+      <div class="actions">
+        <button id="saveProject">Save Project</button>
+        <button id="generatePlan">Generate Plan</button>
+        <button id="exportSummary">Export JSON</button>
+      </div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="workspace">
+      <aside>
+        <h2>Screens</h2>
+        <div id="screens"></div>
+      </aside>
+      <section>
+        <h2>Live Builder</h2>
+        <label>Project note<textarea id="note" rows="5" placeholder="Describe the next feature..."></textarea></label>
+        <button id="addNote">Add Note</button>
+        <div id="notes"></div>
+      </section>
+    </section>
+    <section>
+      <h2>Modules</h2>
+      <div id="modules"></div>
+    </section>
+  </main>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+    }
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>`;
+}
+
+function standalonePwaServiceWorker() {
+  return `const CACHE_NAME = 'rick-c63-generated-pwa-v1';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  self.skipWaiting();
+});
+self.addEventListener('activate', (event) => {
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((key) => key !== CACHE_NAME ? caches.delete(key) : Promise.resolve()))));
+  self.clients.claim();
+});
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => caches.match('./index.html'))));
+});`;
+}
+
+function createPngIconDataUrl(product, size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const palette = product.palette || { bg: '#050610', accent: '#53ff9d', second: '#1dbdff', third: '#ff3edb' };
+  ctx.fillStyle = palette.bg;
+  ctx.fillRect(0, 0, size, size);
+  const grad = ctx.createRadialGradient(size * 0.5, size * 0.45, size * 0.08, size * 0.5, size * 0.5, size * 0.48);
+  grad.addColorStop(0, palette.accent);
+  grad.addColorStop(0.45, palette.second);
+  grad.addColorStop(1, palette.third);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.5, size * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = palette.accent;
+  ctx.lineWidth = Math.max(6, size * 0.03);
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.5, size * 0.4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#03131d';
+  ctx.font = `${Math.round(size * 0.2)}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('R63', size * 0.5, size * 0.52);
+  return canvas.toDataURL('image/png');
+}
+
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.split(',')[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function createBrowserZip(textFiles, binaryFiles = {}) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const entries = [
+    ...Object.entries(textFiles).map(([name, content]) => [name, new TextEncoder().encode(String(content ?? ''))]),
+    ...Object.entries(binaryFiles)
+  ];
+  for (const [name, data] of entries) {
+    const fileName = new TextEncoder().encode(name.replaceAll('\\', '/'));
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + fileName.length + data.length);
+    const view = new DataView(local.buffer);
+    view.setUint32(0, 0x04034b50, true);
+    view.setUint16(4, 20, true);
+    view.setUint16(8, 0, true);
+    view.setUint16(10, 0, true);
+    view.setUint16(12, 0, true);
+    view.setUint16(14, 0, true);
+    view.setUint32(14, crc, true);
+    view.setUint32(18, data.length, true);
+    view.setUint32(22, data.length, true);
+    view.setUint16(26, fileName.length, true);
+    local.set(fileName, 30);
+    local.set(data, 30 + fileName.length);
+    localParts.push(local);
+
+    const central = new Uint8Array(46 + fileName.length);
+    const cview = new DataView(central.buffer);
+    cview.setUint32(0, 0x02014b50, true);
+    cview.setUint16(4, 20, true);
+    cview.setUint16(6, 20, true);
+    cview.setUint32(16, crc, true);
+    cview.setUint32(20, data.length, true);
+    cview.setUint32(24, data.length, true);
+    cview.setUint16(28, fileName.length, true);
+    cview.setUint32(42, offset, true);
+    central.set(fileName, 46);
+    centralParts.push(central);
+    offset += local.length;
+  }
+  const centralSize = centralParts.reduce((sum, item) => sum + item.length, 0);
+  const end = new Uint8Array(22);
+  const eview = new DataView(end.buffer);
+  eview.setUint32(0, 0x06054b50, true);
+  eview.setUint16(8, entries.length, true);
+  eview.setUint16(10, entries.length, true);
+  eview.setUint32(12, centralSize, true);
+  eview.setUint32(16, offset, true);
+  return new Blob([...localParts, ...centralParts, end]);
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0 ^ (-1);
+  for (let index = 0; index < bytes.length; index += 1) crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[index]) & 0xff];
+  return (crc ^ (-1)) >>> 0;
 }
 
 function escapeHtml(value) {
