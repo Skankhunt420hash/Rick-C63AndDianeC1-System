@@ -626,6 +626,9 @@ function localRickCortex(prompt) {
   const target = state.targets.find((item) => item.id === report.target_id);
   const product = generateProductPackage(blueprint, report, prompt);
   const tactical = generateTacticalIdeas(prompt, report);
+  const model = getModelById(state.selectedMainModel);
+  const appFocus = prompt.trim().slice(0, 120) || (target?.title || blueprint.project_name);
+  const nextUpgrade = tactical[0] || "A clearer, stronger original implementation";
   remember(`Rick-C63 worked on ${target?.title || blueprint.project_name}: ${prompt.slice(0, 140)}`);
   state.currentReportId = report.id;
   state.currentBlueprintId = blueprint.id;
@@ -633,18 +636,18 @@ function localRickCortex(prompt) {
 
   if (intent === "explain-blueprint") {
     return {
-      answer: `Alright Elija, kurz und sauber: Ein Blueprint ist kein komisches Business-Wort. Es ist der Bauplan deiner App.\n\nEr sagt:\n1. Welches Problem die App loest.\n2. Welche Seiten sie braucht.\n3. Welche Daten gespeichert werden.\n4. Welche API-Routen noetig sind.\n5. Welche Features zuerst gebaut werden.\n6. Wie aus der Idee eine echte Software wird.\n\nRick-C63 Uebersetzung: Blueprint = Bauzeichnung fuer Software. Ohne Blueprint baut man chaotisch. Mit Blueprint baut man wie ein Architekt.\n\nHier ist was wir daraus bauen koennen: ${blueprint.project_name}. Naechster Schritt: Klick auf Generate Software im Builder.`
+      answer: `${rickVoiceLine("analysis")}\n\nModel-Profil: ${model.label} (Standalone-Modus).\n\nBlueprint = der Bauplan deiner App: Problem, Seiten, Daten, API-Routen, Features und die Reihenfolge fuer den Bau.\n\nFuer **${blueprint.project_name}** ist der naechste saubere Schritt: Builder oeffnen, Bauplan speichern, Generate Software druecken und danach das PWA-Paket exportieren.`
     };
   }
 
   if (intent === "build") {
     return {
-      answer: `${rickVoiceLine("build")}\n\nRick-C63 Builder Mode aktiv.\n\nIch habe aus deinem Auftrag ein ganzes Produktpaket gemacht: ${product.name}.\n\n### Das Produkt\n${product.pitch}\n\n### Die 3 Versionen\n${product.versions.map((item) => `- ${item.name}: ${item.summary}`).join("\n")}\n\n### Was verbunden werden kann\n${product.connections.map((item) => `- ${item}`).join("\n")}\n\n### Warum das funktioniert\nDas ist nicht nur eine Idee, sondern ein System: Eingabe rein, Analyse raus, Entscheidung speichern, Produktpaket erzeugen, naechsten Bauschritt starten. So baut man keine Luftschloesser, sondern Maschinen mit Strom im Keller.\n\n### Naechste 3 Smart Moves\n1. Im Builder auf Generate Software klicken.\n2. Das Produktpaket speichern und mit deinen Seiten verbinden.\n3. Danach lokalen Rick ueber Ollama anbinden, damit er wirklich lange, kluge Software-Sessions fahren kann.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+      answer: `${rickVoiceLine("build")}\n\nModel-Profil: ${model.label} als Hauptmodell.\n\nIch baue gerade auf Basis von **${appFocus}** eine verbesserte Original-App, nicht nur ein Geruest.\n\n### Konkreter Upgrade-Fokus\n- ${nextUpgrade}\n- ${tactical[1] || "Sharper user flow"}\n- ${tactical[2] || "Cleaner delivery path"}\n\n### Was Generate Software jetzt liefern soll\n- direkt benutzbare Standalone-App\n- gespeicherte lokale Daten\n- bessere Struktur als die Ursprungs-App\n- PWA-Export fuer PWABuilder\n\n### Nächster Schritt\n1. Generate Software\n2. Ergebnis pruefen\n3. Export / Send fuer PWABuilder`
     };
   }
 
   return {
-    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 Gedächtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder öffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+    answer: `${rickVoiceLine("analysis")}\n\nModel-Profil: ${model.label} (Standalone-Modus, kein Key-Leak nach außen).\n\nIch arbeite gerade an **${target?.title || "deiner Idee"}**. Dein letzter Fokus war: **${appFocus}**.\n\n### Was ich konkret verbessern würde\n1. ${tactical[0] || "Bessere Kernfunktion"}\n2. ${tactical[1] || "Klareres UI"}\n3. ${tactical[2] || "Sauberer Export"}\n\n### Aktuelles Produktziel\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Nächste sinnvolle Aktion\n${prompt.toLowerCase().includes("ui") || prompt.toLowerCase().includes("design") ? "Ich würde als Nächstes direkt das Interface schärfen und den Flow entmüllen." : "Ich würde als Nächstes den Generate-Flow weiter vertiefen, damit die Ausgabe näher an eine vollständige App rückt."}`
   };
 }
 
@@ -1532,7 +1535,7 @@ function updateAdminButtonLabel() {
 
 async function requireAdminAccess(actionLabel) {
   if (!api.available) {
-    toast("Backend offline. Admin-Absicherung greift erst mit npm start.");
+    toast("Standalone-Modus: Diese Admin-Funktion ist in der gehosteten App nicht aktiv.");
     return false;
   }
   const status = await apiGet("/api/admin/status");
@@ -1643,7 +1646,7 @@ async function askRick(prompt) {
   }
 
   return {
-    answer: `${response.text}\n\nProvider: ${response.provider === "ollama" ? `Ollama Rick-C63 local model (${response.model})` : response.provider}`
+    answer: `${response.text}\n\nProvider: ${response.provider === "ollama" ? `Ollama Rick-C63 local model (${response.model})` : response.provider}\nPreferred main model: ${getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex"}`
   };
 }
 
