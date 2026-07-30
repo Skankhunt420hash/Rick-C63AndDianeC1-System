@@ -5,6 +5,7 @@ const BRAND = {
 };
 
 const STORAGE_KEY = "erleuchtung-rick-c63-diane-droidijana";
+const HOSTED_RUNTIME_VERSION = "v4";
 
 const env = {
   AI_PROVIDER: "demo",
@@ -152,15 +153,34 @@ let previewObjectUrl = "";
 const els = {};
 
 document.addEventListener("DOMContentLoaded", () => {
-  cacheElements();
-  seedIfEmpty();
-  wireEvents();
-  updateAdminButtonLabel();
-  routeTo(location.hash.replace("#", "") || "home");
-  renderAll();
-  greetRick();
-  initializeBackend();
+  selfRepairHostedRuntime().finally(() => {
+    cacheElements();
+    seedIfEmpty();
+    wireEvents();
+    updateAdminButtonLabel();
+    routeTo(location.hash.replace("#", "") || "home");
+    renderAll();
+    greetRick();
+    initializeBackend();
+  });
 });
+
+async function selfRepairHostedRuntime() {
+  try {
+    const lastVersion = localStorage.getItem("hosted-runtime-version") || "";
+    if (lastVersion === HOSTED_RUNTIME_VERSION) return;
+    localStorage.setItem("hosted-runtime-version", HOSTED_RUNTIME_VERSION);
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+    }
+    if (window.caches?.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key).catch(() => false)));
+    }
+  } catch (_) {
+  }
+}
 
 function cacheElements() {
   Object.assign(els, {
@@ -3215,10 +3235,13 @@ function standalonePwaHtml(product) {
   </main>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+      window.addEventListener('load', async () => {
+        const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+        await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+      });
     }
   </script>
-  <script src="app.js"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>`;
 }
