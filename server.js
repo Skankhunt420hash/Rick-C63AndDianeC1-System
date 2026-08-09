@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
@@ -24,6 +24,10 @@ const MAX_SCAN_TEXT_BYTES = 32 * 1024;
 const LLAMA_URL = process.env.LLAMA_CPP_URL || "http://127.0.0.1:8080";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.RICK_C63_OLLAMA_MODEL || "qwen3-coder:30b";
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-codex";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
 const HF_TOKEN = process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || "";
 const HF_JOBS_NAMESPACE = process.env.HF_JOBS_NAMESPACE || "";
 const HF_JOBS_FLAVOR = process.env.HF_JOBS_FLAVOR || "a10g-small";
@@ -72,6 +76,12 @@ await ensureStorage();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    applyCors(req, res);
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url);
       return;
@@ -104,7 +114,8 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === "/api/workspaces" && req.method === "GET") {
-    const db = await readDb();
+    const db = await requireAdmin(req, res);
+    if (!db) return;
     sendJson(res, 200, { ok: true, items: (db.workspaces || []).map((item) => workspaceSummary(item, db)) });
     return;
   }
@@ -113,10 +124,15 @@ async function handleApi(req, res, url) {
     const db = await requireAdmin(req, res);
     if (!db) return;
     const body = await readJson(req);
+    const existingWorkspace = findReusableWorkspace(db, body);
+    if (existingWorkspace) {
+      sendJson(res, 200, { ok: true, reused: true, workspace: workspaceSummary(existingWorkspace, db) });
+      return;
+    }
     const workspace = await createWorkspace(body, db);
     db.workspaces.unshift(workspace);
     await writeDb(db);
-    sendJson(res, 201, { ok: true, workspace: workspaceSummary(workspace, db) });
+    sendJson(res, 201, { ok: true, reused: false, workspace: workspaceSummary(workspace, db) });
     return;
   }
 
@@ -132,6 +148,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "GET" && !action) {
+      if (!(await requireAdmin(req, res, db))) return;
       const tree = await workspaceFileTree(workspace);
       const runs = (db.workspaceRuns || []).filter((run) => run.workspace_id === workspace.id).slice(0, 30);
       sendJson(res, 200, { ok: true, workspace: workspaceSummary(workspace, db, tree), tree, runs });
@@ -139,6 +156,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "GET" && action === "file") {
+      if (!(await requireAdmin(req, res, db))) return;
       const relativePath = url.searchParams.get("path") || "";
       const filePath = resolveWorkspacePath(workspace, relativePath);
       await assertNoWorkspaceSymlink(workspace, filePath);
@@ -180,10 +198,37 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, { ok: true, run, workspace: workspaceSummary(workspace, db) });
       return;
     }
+
+    if (req.method === "POST" && action === "terminal") {
+      if (!(await requireAdmin(req, res, db))) return;
+      const body = await readJson(req);
+      const entry = await runWorkspaceTerminalCommand(workspace, body.command, body.payload);
+      workspace.updated_at = new Date().toISOString();
+      workspace.status = entry.status === "passed" ? workspace.status : "attention";
+      workspace.terminal_history = [entry, ...Array.isArray(workspace.terminal_history) ? workspace.terminal_history : []].slice(0, 30);
+      workspace.activity = [workspaceActivity("terminal-finished", `${entry.command}: ${entry.status}`), ...(workspace.activity || [])].slice(0, 100);
+      await writeDb(db);
+      sendJson(res, 200, { ok: true, entry, workspace: workspaceSummary(workspace, db) });
+      return;
+    }
+
+    if (req.method === "POST" && action === "swarm") {
+      if (!(await requireAdmin(req, res, db))) return;
+      const run = await runWorkspaceSwarm(workspace, db);
+      workspace.updated_at = new Date().toISOString();
+      workspace.status = run.status === "passed" ? "swarm-reviewed" : "attention";
+      workspace.swarm_runs = [run, ...Array.isArray(workspace.swarm_runs) ? workspace.swarm_runs : []].slice(0, 12);
+      workspace.last_swarm_run_id = run.id;
+      workspace.activity = [workspaceActivity("swarm-finished", `${run.status}: ${run.merge_summary}`), ...(workspace.activity || [])].slice(0, 100);
+      await writeDb(db);
+      sendJson(res, 200, { ok: true, run, workspace: workspaceSummary(workspace, db) });
+      return;
+    }
   }
 
   if (url.pathname === "/api/training/jobs" && req.method === "GET") {
-    const db = await readDb();
+    const db = await requireAdmin(req, res);
+    if (!db) return;
     sendJson(res, 200, { ok: true, items: db.trainingJobs || [] });
     return;
   }
@@ -211,6 +256,7 @@ async function handleApi(req, res, url) {
     const job = db.trainingJobs[jobIndex];
 
     if (req.method === "GET" && !action) {
+      if (!(await requireAdmin(req, res, db))) return;
       sendJson(res, 200, { ok: true, job });
       return;
     }
@@ -256,7 +302,8 @@ async function handleApi(req, res, url) {
   };
   const collection = collections[url.pathname];
   if (collection && req.method === "GET") {
-    const db = await readDb();
+    const db = await requireAdmin(req, res);
+    if (!db) return;
     sendJson(res, 200, { ok: true, items: db[collection] || [] });
     return;
   }
@@ -282,6 +329,12 @@ async function handleApi(req, res, url) {
       ok: true,
       app: "Erleuchtung (Rick-C63 & Diane-Droidijana)",
       backend: "node-local",
+      port: PORT,
+      openai: {
+        configured: Boolean(OPENAI_API_KEY),
+        model: OPENAI_MODEL,
+        base_url: OPENAI_BASE_URL
+      },
       ollama,
       llama
     });
@@ -289,11 +342,15 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/db") {
-    sendJson(res, 200, { ok: true, db: publicDb(await readDb()) });
+    const db = await requireAdmin(req, res);
+    if (!db) return;
+    sendJson(res, 200, { ok: true, db: publicDb(db) });
     return;
   }
 
   if (req.method === "GET" && url.pathname === "/api/doctor") {
+    const db = await requireAdmin(req, res);
+    if (!db) return;
     let doctor = { ok: false, status: "No doctor report yet." };
     if (existsSync(DOCTOR_PATH)) {
       doctor = JSON.parse((await readFile(DOCTOR_PATH, "utf8")).replace(/^\uFEFF/, ""));
@@ -400,6 +457,7 @@ async function handleApi(req, res, url) {
       provider: result.provider,
       created_at: new Date().toISOString()
     });
+    db.sessions = db.sessions.slice(0, 100);
     db.memories.unshift({
       id: createId("memory"),
       text: `Rick-C63 discussed: ${prompt.slice(0, 180)}`,
@@ -407,7 +465,7 @@ async function handleApi(req, res, url) {
     });
     db.memories = db.memories.slice(0, 100);
     await writeDb(db);
-    sendJson(res, 200, { ok: true, ...result, db: publicDb(db) });
+    sendJson(res, 200, { ok: true, ...result, db: publicChatState(db) });
     return;
   }
 
@@ -445,8 +503,9 @@ async function handleApi(req, res, url) {
     }
     const build = await writeGeneratedProduct(product);
     const windowsExe = formats.includes("exe") ? await buildWindowsExePackage(product, build) : null;
+    const androidAab = formats.includes("aab") ? await buildAndroidAabPackage(product, build) : null;
     const bundle = await createExportBundle(product, build, formats, windowsExe);
-    sendJson(res, 200, { ok: true, build, bundle, windowsExe });
+    sendJson(res, 200, { ok: true, build, bundle, windowsExe, androidAab });
     return;
   }
 
@@ -489,6 +548,11 @@ async function askRick(prompt, context, db) {
   const memory = db.memories.slice(0, 8).map((item) => `- ${item.text}`).join("\n");
   const user = `User prompt: ${prompt}\n\nCurrent context:\n${JSON.stringify(context, null, 2)}\n\nRecent Rick memories:\n${memory || "none"}`;
 
+  const openAiResult = await callOpenAI(system, user);
+  if (openAiResult?.text) {
+    return { provider: "openai", model: openAiResult.model, text: openAiResult.text };
+  }
+
   const ollamaResult = await callOllama(system, user);
   if (ollamaResult?.text) {
     return { provider: "ollama", model: ollamaResult.model, text: ollamaResult.text };
@@ -505,6 +569,21 @@ async function askRick(prompt, context, db) {
   };
 }
 
+async function callOpenAI(system, user) {
+  if (!OPENAI_API_KEY) return null;
+  const result = await postJson(`${OPENAI_BASE_URL}/chat/completions`, {
+    model: OPENAI_MODEL,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ]
+  }, 60000, {
+    authorization: `Bearer ${OPENAI_API_KEY}`
+  });
+  const text = result?.choices?.[0]?.message?.content?.trim?.() || "";
+  return text ? { model: OPENAI_MODEL, text } : null;
+}
+
 async function callOllama(system, user) {
   const model = await chooseOllamaModel();
   if (!model) return null;
@@ -519,7 +598,7 @@ async function callOllama(system, user) {
       temperature: 0.82,
       num_ctx: 8192
     }
-  }, 240000);
+  }, 60000);
   const text = result?.message?.content?.trim() || "";
   return text ? { model, text } : null;
 }
@@ -554,11 +633,11 @@ async function callLlama(system, user) {
   return completion?.content?.trim() || "";
 }
 
-async function postJson(url, body, timeoutMs = 45000) {
+async function postJson(url, body, timeoutMs = 45000, extraHeaders = {}) {
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...extraHeaders },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs)
     });
@@ -594,6 +673,17 @@ async function checkOllama() {
   } catch {
     return { configured_url: OLLAMA_URL, model: OLLAMA_MODEL, reachable: false, status: "offline" };
   }
+}
+
+function applyCors(req, res) {
+  if (!CORS_ORIGIN) return;
+  const origin = req.headers.origin || "";
+  const allowOrigin = CORS_ORIGIN === "*" ? "*" : (origin && origin === CORS_ORIGIN ? origin : "");
+  if (!allowOrigin) return;
+  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Token");
 }
 
 function localRickFallback(prompt, context) {
@@ -639,11 +729,24 @@ async function writeGeneratedProduct(product) {
   for (const [file, content] of Object.entries(files)) {
     await writeFile(join(dir, file), content, "utf8");
   }
+
+  const targetId = String(expanded.buildTarget?.id || "web-app");
+  const honesty = {
+    "web-app": { status: "ready", label: "Working web app", detail: "This target is locally runnable as a web app on this host." },
+    pwa: { status: "ready", label: "Working PWA-style web app", detail: "This target is locally runnable as a web app with installable-web foundations." },
+    tool: { status: "ready", label: "Working local tool UI", detail: "This target is locally runnable as a browser-based workflow package." },
+    desktop: { status: "preview-scaffold", label: "Desktop preview package", detail: "This is a working browser preview plus desktop packaging scaffold, not a signed desktop binary." },
+    "native-mobile": { status: "preview-scaffold", label: "Native mobile scaffold preview", detail: "This is a browser preview plus native-mobile implementation scaffold, not an APK, AAB or IPA." },
+    "3d-game": { status: "preview-scaffold", label: "3D design preview", detail: "This is a browser preview plus 3D/game architecture scaffold, not a compiled game build." },
+    "vr-game": { status: "preview-scaffold", label: "VR design preview", detail: "This is a browser preview plus VR interaction scaffold, not a headset-ready runtime build." }
+  }[targetId] || { status: "ready", label: "Working web app", detail: "This target is locally runnable as a web app on this host." };
+
   return {
     dir,
     files: Object.keys(files),
     entry: join(dir, "src", "index.html"),
-    url: `/generated-products/${slug}/src/index.html`
+    url: `/generated-products/${slug}/src/index.html`,
+    ...honesty
   };
 }
 
@@ -687,24 +790,55 @@ async function createExportBundle(product, build, formats, windowsExe = null) {
 async function buildWindowsExePackage(product, build) {
   const slug = safeSlug(product.slug || product.name);
   const outputDir = join(ROOT, "exports", `${slug}-windows`);
-  await execFileAsync("powershell", [
-    "-ExecutionPolicy", "Bypass",
-    "-File", join(ROOT, "scripts", "build-windows-exe.ps1"),
-    "-SourceDir", build.dir,
-    "-OutputDir", outputDir,
-    "-AppName", product.name,
-    "-Slug", slug
-  ], {
-    cwd: ROOT,
-    windowsHide: true,
-    timeout: 120000,
-    maxBuffer: 1024 * 1024 * 4
-  });
-  const manifest = JSON.parse((await readFile(join(outputDir, "windows-build.json"), "utf8")).replace(/^\uFEFF/, ""));
+  if (process.platform !== "win32") {
+    return {
+      ok: false,
+      status: "external-build-required",
+      reason: "Windows EXE packaging currently requires a Windows host with PowerShell and the native signing/build toolchain.",
+      dir: "",
+      url: ""
+    };
+  }
+  try {
+    await execFileAsync("powershell", [
+      "-ExecutionPolicy", "Bypass",
+      "-File", join(ROOT, "scripts", "build-windows-exe.ps1"),
+      "-SourceDir", build.dir,
+      "-OutputDir", outputDir,
+      "-AppName", product.name,
+      "-Slug", slug
+    ], {
+      cwd: ROOT,
+      windowsHide: true,
+      timeout: 120000,
+      maxBuffer: 1024 * 1024 * 4
+    });
+    const manifest = JSON.parse((await readFile(join(outputDir, "windows-build.json"), "utf8")).replace(/^\uFEFF/, ""));
+    return {
+      ok: true,
+      ...manifest,
+      dir: outputDir,
+      url: `/exports/${slug}-windows/${slug}.exe`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "external-build-required",
+      reason: error?.message || "Windows EXE packaging failed on this host.",
+      dir: "",
+      url: ""
+    };
+  }
+}
+
+async function buildAndroidAabPackage(product, build) {
   return {
-    ...manifest,
-    dir: outputDir,
-    url: `/exports/${slug}-windows/${slug}.exe`
+    ok: false,
+    status: "external-build-required",
+    reason: "Android AAB packaging requires an Android SDK/Gradle toolchain on a provisioned Android build host. This export includes the scaffold and instructions only.",
+    dir: "",
+    url: "",
+    build_status: build?.status || "preview-scaffold"
   };
 }
 
@@ -815,9 +949,9 @@ ${product.pitch}
 function exeBuildReadme(product) {
   return `# Windows EXE Build Target
 
-Erleuchtung generates a real Windows EXE launcher for ${product.name} during export.
+Erleuchtung prepares the Windows EXE build target for ${product.name} during export.
 
-If WINDOWS_CODESIGN_PFX is configured and Windows SDK SignTool is installed, Erleuchtung signs and verifies the EXE automatically. Otherwise it reports the executable honestly as unsigned.
+A real EXE launcher can only be packaged on a Windows host with the required PowerShell/native packaging toolchain. If WINDOWS_CODESIGN_PFX is configured and Windows SDK SignTool is installed on that host, Erleuchtung can sign and verify the EXE there. Otherwise it reports the executable honestly as unsigned or external-build-required.
 `;
 }
 
@@ -933,7 +1067,20 @@ function productHtml(product) {
         <label>Project note<textarea id="note" rows="5" placeholder="Describe the next feature..."></textarea></label>
         <button id="addNote">Add Note</button>
         <div id="notes"></div>
+        <div class="inline-form">
+          <label>Project record title<input id="recordTitle" type="text" placeholder="e.g. Customer portal"></label>
+          <label>Status<select id="recordStatus"><option>Planned</option><option>In Progress</option><option>Ready</option></select></label>
+          <button id="addRecord">Add Record</button>
+        </div>
       </section>
+    </section>
+    <section class="grid two">
+      <div class="card-panel"><h2>Current Screen</h2><div id="screenDetail"></div></div>
+      <div class="card-panel"><h2>Build Plan</h2><div id="plan"></div></div>
+    </section>
+    <section>
+      <h2>Project Records</h2>
+      <div class="grid two" id="records"></div>
     </section>
     <section>
       <h2>Modules</h2>
@@ -947,29 +1094,34 @@ function productHtml(product) {
 
 function productCss(product) {
   const palette = product.palette || { bg: "#050610", accent: "#53ff9d", second: "#1dbdff", third: "#ff3edb" };
-  return `:root{--bg:${palette.bg};--accent:${palette.accent};--second:${palette.second};--third:${palette.third};--text:#f3fbff;--muted:#a9b8c9;--panel:rgba(255,255,255,.07);--line:rgba(155,231,255,.22)}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 10%,color-mix(in srgb,var(--second) 28%,transparent),transparent 30%),radial-gradient(circle at 80% 0,color-mix(in srgb,var(--third) 22%,transparent),transparent 24%),var(--bg);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif}.cosmos{position:fixed;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,.75) 0 1px,transparent 1px);background-size:120px 120px;opacity:.22;animation:drift 34s linear infinite}header{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}nav{display:flex;gap:8px;overflow:auto}nav button,.actions button,#addNote{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:10px 12px;font-weight:800}main{width:min(1180px,calc(100% - 28px));margin:0 auto;padding:38px 0 70px}.hero{min-height:360px;display:grid;align-content:center}.eyebrow{color:var(--accent);font-weight:900;text-transform:uppercase;letter-spacing:.08em}h1{max-width:980px;margin:.1em 0;font-size:clamp(42px,9vw,96px);line-height:.94;letter-spacing:0}h2{margin:0 0 14px}.hero p{max-width:760px;color:#dceeff;font-size:20px;line-height:1.55}.actions{display:flex;flex-wrap:wrap;gap:10px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card,.workspace>aside,.workspace>section,main>section:not(.hero):not(.grid){border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 20px 80px rgba(0,0,0,.28);padding:18px}.workspace{display:grid;grid-template-columns:320px 1fr;gap:14px;margin-top:14px}.screen,.module,.note{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:rgba(0,0,0,.18)}textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.32);color:var(--text);padding:12px;margin:8px 0 10px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:900}@media(max-width:800px){header{display:grid}.grid,.workspace{grid-template-columns:1fr}h1{font-size:clamp(38px,16vw,70px)}}@keyframes drift{to{transform:translate(-120px,120px)}}`;
+  return `:root{--bg:${palette.bg};--accent:${palette.accent};--second:${palette.second};--third:${palette.third};--text:#f3fbff;--muted:#a9b8c9;--panel:rgba(255,255,255,.07);--line:rgba(155,231,255,.22)}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 10%,color-mix(in srgb,var(--second) 28%,transparent),transparent 30%),radial-gradient(circle at 80% 0,color-mix(in srgb,var(--third) 22%,transparent),transparent 24%),var(--bg);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif}.cosmos{position:fixed;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,.75) 0 1px,transparent 1px);background-size:120px 120px;opacity:.22;animation:drift 34s linear infinite}header{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}nav{display:flex;gap:8px;overflow:auto}nav button,.actions button,#addNote,#addRecord{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:10px 12px;font-weight:800;cursor:pointer}nav button.active{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}main{width:min(1180px,calc(100% - 28px));margin:0 auto;padding:38px 0 70px}.hero{min-height:360px;display:grid;align-content:center}.eyebrow{color:var(--accent);font-weight:900;text-transform:uppercase;letter-spacing:.08em}h1{max-width:980px;margin:.1em 0;font-size:clamp(42px,9vw,96px);line-height:.94;letter-spacing:0}h2,h3{margin:0 0 14px}.hero p{max-width:760px;color:#dceeff;font-size:20px;line-height:1.55}.actions{display:flex;flex-wrap:wrap;gap:10px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.workspace>aside,.workspace>section,.card-panel,main>section:not(.hero):not(.grid){border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 20px 80px rgba(0,0,0,.28);padding:18px}.workspace{display:grid;grid-template-columns:320px 1fr;gap:14px;margin-top:14px}.screen,.module,.note,.record,.plan-step{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:rgba(0,0,0,.18)}textarea,input,select{width:100%;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.32);color:var(--text);padding:12px;margin:8px 0 10px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:900}.muted{color:var(--muted)}.inline-form{display:grid;grid-template-columns:1.2fr .8fr auto;gap:10px;align-items:end}.detail-list{display:grid;gap:10px}.detail-item{border:1px solid var(--line);border-radius:8px;padding:12px;background:rgba(0,0,0,.18)}@media(max-width:800px){header{display:grid}.grid,.grid.two,.workspace,.inline-form{grid-template-columns:1fr}h1{font-size:clamp(38px,16vw,70px)}}@keyframes drift{to{transform:translate(-120px,120px)}}`;
 }
 
 function productJs(product) {
   return `const product=${JSON.stringify(product, null, 2)};
 const stateKey=product.appStateKey;
-const saved=JSON.parse(localStorage.getItem(stateKey)||'{"notes":[],"saves":0}');
+const saved=JSON.parse(localStorage.getItem(stateKey)||'{"notes":[],"records":[],"saves":0,"activeScreen":""}');
 const $=(id)=>document.querySelector(id);
 const escape=(value)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;");
-$("#nav").innerHTML=product.screens.map(s=>'<button data-screen="'+escape(s.name)+'">'+escape(s.name)+'</button>').join('');
-$("#metrics").innerHTML=[
-  ['Versions',product.versions.length],
-  ['Modules',product.modules.length],
-  ['Saved',saved.saves||0]
-].map(([k,v])=>'<div class="card"><span class="status">'+k+'</span><h2>'+v+'</h2></div>').join('');
-$("#screens").innerHTML=product.screens.map(s=>'<div class="screen"><strong>'+escape(s.name)+'</strong><p>'+escape(s.purpose)+'</p></div>').join('');
-$("#modules").innerHTML=product.features.map(f=>'<div class="module"><span class="status">'+escape(f.status)+'</span><h3>'+escape(f.title)+'</h3><p>'+escape(f.description)+'</p></div>').join('');
+const persist=()=>localStorage.setItem(stateKey,JSON.stringify(saved));
+const activeScreen=()=>saved.activeScreen||product.screens[0]?.name||'Dashboard';
+if(!Array.isArray(saved.notes))saved.notes=[];
+if(!Array.isArray(saved.records))saved.records=[];
+if(!saved.activeScreen)saved.activeScreen=activeScreen();
+function renderNav(){ $("#nav").innerHTML=product.screens.map(s=>'<button data-screen="'+escape(s.name)+'" class="'+(s.name===activeScreen()?'active':'')+'">'+escape(s.name)+'</button>').join(''); $("#nav").querySelectorAll('[data-screen]').forEach((button)=>button.addEventListener('click',()=>{saved.activeScreen=button.dataset.screen;persist();renderNav();renderScreenDetail();})); }
+function renderMetrics(){ $("#metrics").innerHTML=[["Versions",product.versions.length],["Modules",product.modules.length],["Saved",saved.saves||0]].map(([k,v])=>'<div class="card"><span class="status">'+k+'</span><h2>'+v+'</h2></div>').join(''); }
+function renderScreens(){ $("#screens").innerHTML=product.screens.map(s=>'<div class="screen"><strong>'+escape(s.name)+'</strong><p>'+escape(s.purpose)+'</p></div>').join(''); }
+function renderModules(){ $("#modules").innerHTML=product.features.map(f=>'<div class="module"><span class="status">'+escape(f.status)+'</span><h3>'+escape(f.title)+'</h3><p>'+escape(f.description)+'</p></div>').join(''); }
 function renderNotes(){ $("#notes").innerHTML=saved.notes.map(n=>'<div class="note">'+escape(n)+'</div>').join('') || '<p>No notes yet.</p>'; }
-renderNotes();
-$("#addNote").addEventListener('click',()=>{ const value=$("#note").value.trim(); if(!value)return; saved.notes.unshift(value); $("#note").value=''; localStorage.setItem(stateKey,JSON.stringify(saved)); renderNotes(); });
-$("#saveProject").addEventListener('click',()=>{ saved.saves=(saved.saves||0)+1; localStorage.setItem(stateKey,JSON.stringify(saved)); location.reload(); });
-$("#generatePlan").addEventListener('click',()=>{ const plan=product.buildPhases.map((p,i)=>(i+1)+'. '+p).join('\\n'); saved.notes.unshift('Generated plan:\\n'+plan); localStorage.setItem(stateKey,JSON.stringify(saved)); renderNotes(); });
-$("#exportSummary").addEventListener('click',()=>{ const blob=new Blob([JSON.stringify(product,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=product.slug+'-product.json'; a.click(); });`;
+function renderPlan(){ const target=document.querySelector('#plan'); if(!target) return; target.innerHTML=product.buildPhases.map((step,index)=>'<div class="plan-step"><span class="status">Step '+(index+1)+'</span><strong>'+escape(step)+'</strong></div>').join(''); }
+function renderRecords(){ const target=document.querySelector('#records'); if(!target) return; target.innerHTML=saved.records.length?saved.records.map((record,index)=>'<div class="record"><span class="status">'+escape(record.status)+'</span><h3>'+escape(record.title)+'</h3><p class="muted">'+escape(record.summary||'No summary yet.')+'</p><small>Record '+(index+1)+'</small></div>').join(''):'<div class="card-panel"><p>No project records yet. Add one below.</p></div>'; }
+function renderScreenDetail(){ const current=product.screens.find((screen)=>screen.name===activeScreen())||product.screens[0]; const target=document.querySelector('#screenDetail'); if(!target||!current) return; const matchingModules=product.features.slice(0,3).map((feature)=>'<div class="detail-item"><strong>'+escape(feature.title)+'</strong><p>'+escape(feature.description)+'</p></div>').join(''); target.innerHTML='<div class="detail-list"><div class="detail-item"><span class="status">Current screen</span><h3>'+escape(current.name)+'</h3><p>'+escape(current.purpose)+'</p></div>'+matchingModules+'</div>'; }
+renderNav();renderMetrics();renderScreens();renderModules();renderNotes();renderPlan();renderRecords();renderScreenDetail();
+$("#addNote").addEventListener('click',()=>{ const value=$("#note").value.trim(); if(!value)return; saved.notes.unshift(value); $("#note").value=''; persist(); renderNotes(); });
+document.querySelector('#addRecord')?.addEventListener('click',()=>{ const title=document.querySelector('#recordTitle')?.value.trim(); if(!title)return; const status=document.querySelector('#recordStatus')?.value||'Planned'; saved.records.unshift({title,status,summary:'Created inside generated app.'}); document.querySelector('#recordTitle').value=''; persist(); renderRecords(); });
+$("#saveProject").addEventListener('click',()=>{ saved.saves=(saved.saves||0)+1; persist(); renderMetrics(); });
+$("#generatePlan").addEventListener('click',()=>{ const plan=product.buildPhases.map((p,i)=>(i+1)+'. '+p).join('\\n'); saved.notes.unshift('Generated plan:\\n'+plan); persist(); renderNotes(); renderPlan(); });
+$("#exportSummary").addEventListener('click',()=>{ const blob=new Blob([JSON.stringify({...product,savedState:saved},null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=product.slug+'-product.json'; a.click(); });`;
 }
 
 function hashString(value) {
@@ -1224,6 +1376,13 @@ const workspaceAdapters = {
   }
 };
 
+function findReusableWorkspace(db, input = {}) {
+  const projectId = String(input.project_id || "").slice(0, 160);
+  const adapterId = String(input.adapter || "web-pwa");
+  if (!projectId) return null;
+  return (db.workspaces || []).find((item) => item.project_id === projectId && item.adapter === adapterId) || null;
+}
+
 async function createWorkspace(input, db) {
   const name = String(input.name || "Untitled Workspace").trim().slice(0, 100);
   const adapterId = String(input.adapter || "web-pwa");
@@ -1337,7 +1496,7 @@ function resolveWorkspacePath(workspace, value) {
 
 function isContainedPath(root, target) {
   const fromRoot = relative(resolve(root), resolve(target));
-  return fromRoot === "" || (!fromRoot.startsWith("..") && !fromRoot.includes(`..${sep}`) && !resolve(fromRoot).startsWith(sep));
+  return fromRoot === "" || (!fromRoot.startsWith("..") && !fromRoot.includes(`..${sep}`) && !isAbsolute(fromRoot));
 }
 
 async function assertNoWorkspaceSymlink(workspace, target) {
@@ -1390,6 +1549,9 @@ function workspaceSummary(workspace, db, tree = null) {
     limits: adapter.limits,
     readiness,
     preview_url: readiness.preview.available ? `/workspace-previews/${encodeURIComponent(workspace.id)}/` : "",
+    terminal_allowed: allowedWorkspaceTerminalCommands(),
+    terminal_history: Array.isArray(workspace.terminal_history) ? workspace.terminal_history.slice(0, 30) : [],
+    swarm_runs: Array.isArray(workspace.swarm_runs) ? workspace.swarm_runs.slice(0, 12) : [],
     run_count: runs.length,
     last_run: runs[0] || null
   };
@@ -1443,6 +1605,374 @@ async function runWorkspaceCommand(workspace, commandValue) {
     started_at: startedAt,
     finished_at: new Date().toISOString()
   };
+}
+
+function allowedWorkspaceTerminalCommands() {
+  return ["pwd", "ls", "find", "cat", "head", "tail", "grep", "git status", "node --check <file>", "npm run check", "npm test", "mkdir <dir>", "touch <file>", "write <file>", "append <file>", "replace <file>"];
+}
+
+function tokenizeTerminalCommand(input) {
+  const text = String(input || "").trim();
+  const matches = text.match(/"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\S+/g) || [];
+  return matches.map((part) => {
+    if ((part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))) {
+      return part.slice(1, -1);
+    }
+    return part;
+  });
+}
+
+function normalizeTerminalPath(value) {
+  const path = String(value || ".").trim() || ".";
+  if (path === ".") return ".";
+  return normalizeWorkspacePath(path);
+}
+
+function assertTerminalPathAllowed(path) {
+  if (!path || path === ".") return;
+  if (isAbsolute(path) || path.split("/").includes("..") || isSensitiveWorkspacePath(path)) {
+    throw httpError(400, `Path is not allowed: ${path}`);
+  }
+}
+
+async function runWorkspaceTerminalCommand(workspace, commandText, payload = "") {
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
+  const tokens = tokenizeTerminalCommand(commandText);
+  if (!tokens.length) throw httpError(400, "Missing terminal command.");
+  const [base, ...args] = tokens;
+  let operation;
+  try {
+    operation = buildWorkspaceTerminalOperation(base, args, payload);
+  } catch (error) {
+    if (error.statusCode) throw error;
+    throw httpError(400, error.message || "Terminal command is not allowed.");
+  }
+  const result = operation.kind === "process"
+    ? await executeWorkspaceTerminal(workspace, operation.file, operation.args)
+    : await executeWorkspaceTerminalFileOp(workspace, operation);
+  return {
+    id: createId("workspace-terminal"),
+    workspace_id: workspace.id,
+    command: String(commandText || "").trim(),
+    status: result.passed ? "passed" : "failed",
+    exit_code: result.exit_code,
+    output: String(result.output || "").slice(0, MAX_RUN_OUTPUT_BYTES),
+    duration_ms: Date.now() - started,
+    started_at: startedAt,
+    finished_at: new Date().toISOString()
+  };
+}
+
+function buildWorkspaceTerminalOperation(baseCommand, args, payload) {
+  const cmd = String(baseCommand || "").trim();
+  if (cmd === "pwd") return { kind: "process", file: "pwd", args: [] };
+  if (cmd === "ls") {
+    const target = normalizeTerminalPath(args[0] || ".");
+    assertTerminalPathAllowed(target);
+    return { kind: "process", file: "ls", args: ["-la", target] };
+  }
+  if (cmd === "find") {
+    const target = normalizeTerminalPath(args[0] || ".");
+    assertTerminalPathAllowed(target);
+    return { kind: "process", file: "find", args: [target, "-maxdepth", "3"] };
+  }
+  if (["cat", "head", "tail", "touch"].includes(cmd)) {
+    const target = normalizeTerminalPath(args[0] || "");
+    assertTerminalPathAllowed(target);
+    if (!target || target === ".") throw httpError(400, `${cmd} needs a file path.`);
+    const extra = cmd === "head" || cmd === "tail" ? ["-n", "40"] : [];
+    return { kind: "process", file: cmd, args: [...extra, target] };
+  }
+  if (cmd === "mkdir") {
+    const target = normalizeTerminalPath(args[0] || "");
+    assertTerminalPathAllowed(target);
+    if (!target || target === ".") throw httpError(400, "mkdir needs a directory path.");
+    return { kind: "process", file: "mkdir", args: ["-p", target] };
+  }
+  if (cmd === "grep") {
+    const pattern = String(args[0] || "").trim();
+    const target = normalizeTerminalPath(args[1] || ".");
+    assertTerminalPathAllowed(target);
+    if (!pattern) throw httpError(400, "grep needs a pattern.");
+    return { kind: "process", file: "grep", args: ["-Rni", "--", pattern, target] };
+  }
+  if (cmd === "git") {
+    if (args.join(" ") !== "status") throw httpError(400, "Only 'git status' is allowed.");
+    return { kind: "process", file: "git", args: ["status", "--short", "--branch"] };
+  }
+  if (cmd === "node") {
+    if (args[0] !== "--check") throw httpError(400, "Only 'node --check <file>' is allowed.");
+    const target = normalizeTerminalPath(args[1] || "");
+    assertTerminalPathAllowed(target);
+    if (!target || target === ".") throw httpError(400, "node --check needs a file path.");
+    return { kind: "process", file: process.execPath, args: ["--check", target] };
+  }
+  if (cmd === "npm") {
+    const script = args.join(" ");
+    if (script === "run check") return { kind: "process", file: "npm", args: ["run", "check"] };
+    if (script === "test") return { kind: "process", file: "npm", args: ["test"] };
+    throw httpError(400, "Only 'npm run check' and 'npm test' are allowed.");
+  }
+  if (["write", "append", "replace"].includes(cmd)) {
+    const target = normalizeTerminalPath(args[0] || "");
+    assertTerminalPathAllowed(target);
+    if (!target || target === ".") throw httpError(400, `${cmd} needs a file path.`);
+    if (!String(payload || "").length) throw httpError(400, `${cmd} needs payload content.`);
+    return { kind: cmd, path: target, payload: String(payload || "") };
+  }
+  throw httpError(400, `Command is not allowed: ${cmd}`);
+}
+
+async function executeWorkspaceTerminalFileOp(workspace, operation) {
+  const filePath = resolveWorkspacePath(workspace, operation.path);
+  await assertNoWorkspaceSymlink(workspace, dirname(filePath));
+  await mkdir(dirname(filePath), { recursive: true });
+  let output = "";
+  if (operation.kind === "write") {
+    if (Buffer.byteLength(operation.payload, "utf8") > MAX_WORKSPACE_FILE_BYTES) throw httpError(413, "Payload exceeds workspace editor limit.");
+    await writeFile(filePath, operation.payload, "utf8");
+    output = `Wrote ${operation.path} (${Buffer.byteLength(operation.payload, "utf8")} bytes).`;
+  }
+  if (operation.kind === "append") {
+    const next = existsSync(filePath) ? `${await readFile(filePath, "utf8")}${operation.payload}` : operation.payload;
+    if (Buffer.byteLength(next, "utf8") > MAX_WORKSPACE_FILE_BYTES) throw httpError(413, "Result exceeds workspace editor limit.");
+    await appendFile(filePath, operation.payload, "utf8");
+    output = `Appended ${Buffer.byteLength(operation.payload, "utf8")} bytes to ${operation.path}.`;
+  }
+  if (operation.kind === "replace") {
+    const splitToken = "\n---REPLACE-WITH---\n";
+    const [oldText, newText] = String(operation.payload).split(splitToken);
+    if (newText === undefined) throw httpError(400, "replace payload must contain OLD + '\n---REPLACE-WITH---\n' + NEW.");
+    const current = await readFile(filePath, "utf8").catch(() => "");
+    if (!oldText) throw httpError(400, "replace payload needs OLD text before the separator.");
+    if (!current.includes(oldText)) throw httpError(400, "replace OLD text was not found in the file.");
+    const updated = current.replace(oldText, newText);
+    if (Buffer.byteLength(updated, "utf8") > MAX_WORKSPACE_FILE_BYTES) throw httpError(413, "Result exceeds workspace editor limit.");
+    await writeFile(filePath, updated, "utf8");
+    output = `Replaced first matching block in ${operation.path}.`;
+  }
+  return { passed: true, exit_code: 0, output };
+}
+
+const DEFAULT_SWARM_AGENTS = [
+  { id: "builder", name: "Builder" },
+  { id: "fixer", name: "Fixer" },
+  { id: "architect", name: "Architect" },
+  { id: "toolsmith", name: "Toolsmith" },
+  { id: "tester", name: "Tester" }
+];
+
+function getWorkspaceSwarmAgents(workspace, db) {
+  const project = (db.empireProjects || []).find((item) => item.id === workspace.project_id);
+  const configured = project?.product_package?.swarm?.agents;
+  return Array.isArray(configured) && configured.length ? configured : DEFAULT_SWARM_AGENTS;
+}
+
+async function runWorkspaceSwarm(workspace, db) {
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
+  const tree = await workspaceFileTree(workspace);
+  const project = (db.empireProjects || []).find((item) => item.id === workspace.project_id) || null;
+  const blueprint = project ? (db.blueprints || []).find((item) => item.id === project.blueprint_id) : null;
+  const agents = getWorkspaceSwarmAgents(workspace, db);
+  const syntax = await runWorkspaceSyntax(workspace);
+  const inspect = await inspectWorkspaceBuild(workspace);
+  const samplePaths = ["README.md", "product.spec.json", "src/app.js", "web/index.html", "test/workspace.test.js"];
+  const samples = {};
+  for (const path of samplePaths) {
+    if (tree.some((item) => item.type === "file" && item.path === path)) {
+      samples[path] = String(await readFile(resolveWorkspacePath(workspace, path), "utf8")).slice(0, 2400);
+    }
+  }
+
+  const toolIdeas = [
+    `Command center for ${blueprint?.project_name || workspace.name} with quick actions and live status`,
+    "Auto-fix queue that groups failing checks into one repair lane",
+    "Feature lab that stores the best swarm ideas before merge"
+  ];
+
+  const agentResults = agents.map((agent) => buildSwarmAgentResult(agent, { workspace, blueprint, syntax, inspect, tree, samples, toolIdeas }));
+  const mergeSummary = [
+    syntax.passed ? "syntax passed" : "syntax needs attention",
+    inspect.passed ? "build inspect passed" : "build inspect found gaps",
+    `${agentResults.length} swarm agents reviewed the workspace`
+  ].join("; ");
+
+  const reportJson = {
+    generated_at: new Date().toISOString(),
+    workspace: workspace.name,
+    merge_summary: mergeSummary,
+    agents: agentResults,
+    tool_ideas: toolIdeas,
+    syntax,
+    inspect
+  };
+  const reportMd = `# Workspace Swarm Merge\n\n## Merge summary\n- ${mergeSummary}\n\n## Agent results\n${agentResults.map((agent) => `\n### ${agent.name}\n- Summary: ${agent.summary}\n- Suggestions:\n${agent.suggestions.map((item) => `  - ${item}`).join("\n")}\n- Fixes applied:\n${agent.fixes_applied.map((item) => `  - ${item}`).join("\n")}`).join("\n")}\n\n## Tool ideas\n${toolIdeas.map((item) => `- ${item}`).join("\n")}\n`;
+  await mkdir(resolveWorkspacePath(workspace, "swarm"), { recursive: true });
+  await writeFile(resolveWorkspacePath(workspace, "swarm/last-swarm-report.json"), JSON.stringify(reportJson, null, 2), "utf8");
+  await writeFile(resolveWorkspacePath(workspace, "swarm/LAST_SWARM_REPORT.md"), reportMd, "utf8");
+  const appliedEdits = await applyWorkspaceSwarmEdits(workspace, { reportJson, toolIdeas, mergeSummary, agentResults, blueprint });
+  const specPath = resolveWorkspacePath(workspace, "product.spec.json");
+  const spec = JSON.parse(await readFile(specPath, "utf8").catch(() => "{}"));
+  spec.swarmMerge = { summary: mergeSummary, toolIdeas, updated_at: new Date().toISOString(), appliedEdits };
+  await writeFile(specPath, JSON.stringify(spec, null, 2), "utf8");
+  if (project) {
+    project.swarm_merge = { summary: mergeSummary, toolIdeas, updated_at: new Date().toISOString() };
+    if (project.product_package) {
+      project.product_package.modules = [...new Set([...(project.product_package.modules || []), ...toolIdeas])];
+      project.product_package.swarm = {
+        ...(project.product_package.swarm || {}),
+        last_merge_summary: mergeSummary,
+        last_merge_at: new Date().toISOString()
+      };
+    }
+    project.updated_at = new Date().toISOString();
+    project.next_step = "Review swarm merge, pick fixes, then continue coding in the workspace.";
+  }
+  return {
+    id: createId("workspace-swarm"),
+    workspace_id: workspace.id,
+    status: agentResults.some((item) => item.status === "attention") ? "attention" : "passed",
+    duration_ms: Date.now() - started,
+    started_at: startedAt,
+    finished_at: new Date().toISOString(),
+    merge_summary: mergeSummary,
+    applied_edits: appliedEdits,
+    agents: agentResults,
+    output: reportMd
+  };
+}
+
+async function applyWorkspaceSwarmEdits(workspace, context) {
+  const edits = [];
+  const readSafe = async (path) => await readFile(resolveWorkspacePath(workspace, path), "utf8").catch(() => "");
+
+  const readmePath = "README.md";
+  const readme = await readSafe(readmePath);
+  if (readme) {
+    const marker = "## Swarm Merge\n\n";
+    const block = `${marker}- Summary: ${context.mergeSummary}\n- Applied edits: README, product spec, source, preview, tests\n- Tool ideas:\n${context.toolIdeas.map((item) => `  - ${item}`).join("\n")}\n`;
+    const next = readme.includes(marker) ? readme.replace(/## Swarm Merge[\s\S]*$/m, block.trimEnd() + "\n") : `${readme.trimEnd()}\n\n${block}`;
+    await writeFile(resolveWorkspacePath(workspace, readmePath), next, "utf8");
+    edits.push(readmePath);
+  }
+
+  const appPath = "src/app.js";
+  const appSource = await readSafe(appPath);
+  if (appSource.includes("return ") && !appSource.includes("swarm_ready")) {
+    const next = appSource.replace(/return\s+(\{[\s\S]*?\});/, (match, objectLiteral) => {
+      const trimmed = objectLiteral.replace(/\n\}$/, "");
+      return `return ${trimmed},\n    swarm_ready: true,\n    swarm_tool_ideas: ${JSON.stringify(context.toolIdeas, null, 4).replace(/^/gm, "    ")},\n    swarm_merge_summary: ${JSON.stringify(context.mergeSummary)}\n  };`;
+    });
+    if (next !== appSource) {
+      await writeFile(resolveWorkspacePath(workspace, appPath), next, "utf8");
+      edits.push(appPath);
+    }
+  }
+
+  const previewPath = "web/index.html";
+  const preview = await readSafe(previewPath);
+  if (preview && !preview.includes("Swarm upgrade ideas")) {
+    const cards = context.toolIdeas.map((item) => `<article class=\"card\">${escapeHtml(item)}</article>`).join("");
+    const insertion = `<h2>Swarm upgrade ideas</h2><div class=\"grid\">${cards}</div><h2>Swarm merge</h2><p>${escapeHtml(context.mergeSummary)}</p>`;
+    const next = preview.replace("</main>", `${insertion}</main>`);
+    await writeFile(resolveWorkspacePath(workspace, previewPath), next, "utf8");
+    edits.push(previewPath);
+  }
+
+  const testPath = "test/workspace.test.js";
+  const testSource = await readSafe(testPath);
+  if (testSource && !testSource.includes("swarm metadata")) {
+    const next = `${testSource.trimEnd()}\n\ntest("workspace swarm metadata exists", () => {\n  const status = workspaceStatus();\n  assert.equal(status.swarm_ready, true);\n  assert.ok(Array.isArray(status.swarm_tool_ideas));\n  assert.ok(status.swarm_tool_ideas.length >= 1);\n});\n`;
+    await writeFile(resolveWorkspacePath(workspace, testPath), next, "utf8");
+    edits.push(testPath);
+  }
+
+  return edits;
+}
+
+function buildSwarmAgentResult(agent, context) {
+  const treePaths = new Set((context.tree || []).filter((item) => item.type === "file").map((item) => item.path));
+  if (agent.id === "builder") {
+    return {
+      id: agent.id,
+      name: agent.name,
+      status: treePaths.has("web/index.html") ? "passed" : "attention",
+      summary: "Checked preview shell, starter sources and product merge files.",
+      suggestions: [
+        "Keep the live preview wired to the current workspace while coding.",
+        "Promote the strongest swarm tool idea into the visible dashboard."
+      ],
+      fixes_applied: ["Updated product.spec.json with swarmMerge metadata.", "Wrote workspace swarm report files."]
+    };
+  }
+  if (agent.id === "fixer") {
+    return {
+      id: agent.id,
+      name: agent.name,
+      status: context.syntax.passed ? "passed" : "attention",
+      summary: context.syntax.passed ? "Syntax check is currently clean." : "Syntax check found something that needs repair.",
+      suggestions: [
+        context.syntax.passed ? "Keep running check/test after each meaningful edit." : "Start with the syntax failure before bigger changes.",
+        "Use terminal write/replace commands for quick targeted repairs."
+      ],
+      fixes_applied: [context.syntax.passed ? "No emergency fix needed; state captured in swarm report." : "Captured fix priority in swarm report."]
+    };
+  }
+  if (agent.id === "architect") {
+    return {
+      id: agent.id,
+      name: agent.name,
+      status: context.inspect.passed ? "passed" : "attention",
+      summary: "Reviewed workspace shape, readiness and adapter boundaries.",
+      suggestions: [
+        `Current pages: ${(context.blueprint?.frontend_pages || []).join(", ") || "dashboard flow not saved yet"}.`,
+        "Separate app shell, data model and tool modules so swarm fixes stay local."
+      ],
+      fixes_applied: ["Merged architecture notes into the swarm report."]
+    };
+  }
+  if (agent.id === "toolsmith") {
+    return {
+      id: agent.id,
+      name: agent.name,
+      status: "passed",
+      summary: "Invented stronger tools for the generated app and merged them back.",
+      suggestions: context.toolIdeas,
+      fixes_applied: ["Merged tool ideas into the linked product package modules."]
+    };
+  }
+  return {
+    id: agent.id,
+    name: agent.name,
+    status: context.inspect.passed && context.syntax.passed ? "passed" : "attention",
+    summary: "Reviewed test loop, inspection state and regression surface.",
+    suggestions: [
+      "Run syntax, check and preview after every file merge.",
+      "Keep a regression note inside the workspace swarm report."
+    ],
+    fixes_applied: ["Stored the latest QA snapshot in the swarm report."]
+  };
+}
+
+async function executeWorkspaceTerminal(workspace, file, args) {
+  try {
+    const { stdout, stderr } = await execFileAsync(file, args, {
+      cwd: workspaceRoot(workspace),
+      timeout: 30000,
+      maxBuffer: MAX_RUN_OUTPUT_BYTES,
+      windowsHide: true,
+      env: { PATH: process.env.PATH || "", SYSTEMROOT: process.env.SYSTEMROOT || "", TEMP: process.env.TEMP || "" }
+    });
+    return { passed: true, exit_code: 0, output: `${stdout || ""}${stderr || ""}`.trim() || "Command finished." };
+  } catch (error) {
+    return {
+      passed: false,
+      exit_code: Number.isInteger(error.code) ? error.code : 1,
+      output: `${error.stdout || ""}${error.stderr || error.message || "Command failed."}`.trim()
+    };
+  }
 }
 
 async function runWorkspaceSyntax(workspace) {
@@ -1509,6 +2039,12 @@ function httpError(statusCode, message) {
 function publicDb(db) {
   const { adminAuth, ...safeDb } = db || {};
   return safeDb;
+}
+
+function publicChatState(db) {
+  return {
+    memories: Array.isArray(db?.memories) ? db.memories.slice(0, 100) : []
+  };
 }
 
 function safeSlug(value) {

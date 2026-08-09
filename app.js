@@ -5,6 +5,8 @@ const BRAND = {
 };
 
 const STORAGE_KEY = "erleuchtung-rick-c63-diane-droidijana";
+const API_BASE_STORAGE_KEY = "erleuchtung-api-base";
+const HOSTED_RUNTIME_VERSION = "v5";
 
 const env = {
   AI_PROVIDER: "demo",
@@ -21,8 +23,20 @@ const env = {
 const api = {
   available: false,
   health: null,
-  doctor: null
+  doctor: null,
+  base: resolveApiBase()
 };
+
+const MODEL_CATALOG = [
+  { id: "codex", label: "GPT-5.4 Codex", provider: "OpenAI", tier: "Pro", role: "Best coding / flagship", free: false },
+  { id: "premium", label: "GPT-5.4 Mini", provider: "OpenAI", tier: "Paid", role: "Strong allrounder", free: false },
+  { id: "komplex", label: "Codestral Latest", provider: "Mistral", tier: "Paid", role: "Coding specialist", free: false },
+  { id: "code", label: "Qwen3 Coder", provider: "OpenRouter", tier: "Free", role: "Best free coding", free: true },
+  { id: "fast", label: "Gemini 2.5 Flash Lite", provider: "Google", tier: "Free", role: "Fast free allrounder", free: true },
+  { id: "oss", label: "GPT-OSS 120B", provider: "OpenRouter", tier: "Free", role: "Large free reasoning", free: true },
+  { id: "laguna", label: "Laguna M.1", provider: "OpenRouter", tier: "Free", role: "Strong free builder", free: true },
+  { id: "ultra", label: "Nemotron Ultra 550B", provider: "OpenRouter", tier: "Free", role: "Big free reasoning", free: true }
+];
 
 const buildTargets = [
   { id: "web-app", label: "Web App", level: "Buildable now", tone: "ready", output: "Working responsive web app + ZIP" },
@@ -34,6 +48,47 @@ const buildTargets = [
   { id: "vr-game", label: "VR Experience", level: "Design scaffold", tone: "plan", output: "VR interaction blueprint and export package" }
 ];
 
+function buildTargetGuidance(targetId) {
+  const guidance = {
+    "web-app": {
+      badge: "Works here now",
+      tone: "ready",
+      text: "Builds a working local web app immediately and can be reopened inside the generated-product flow.",
+    },
+    "pwa": {
+      badge: "Works here now",
+      tone: "ready",
+      text: "Builds the same working web app with installable-web foundations; still verified locally as web first.",
+    },
+    "desktop": {
+      badge: "Needs host/toolchain",
+      tone: "partial",
+      text: "Exports a desktop-oriented package honestly, but real packaged binaries depend on the target host and signing/runtime toolchain.",
+    },
+    "native-mobile": {
+      badge: "Scaffold only",
+      tone: "plan",
+      text: "Creates a verified app blueprint plus editable workspace, but not a finished APK/AAB/IPA on this host. Native packaging still needs Android/iOS toolchains externally.",
+    },
+    "tool": {
+      badge: "Works here now",
+      tone: "ready",
+      text: "Builds a working local automation-style UI/package that can be reopened and iterated here.",
+    },
+    "3d-game": {
+      badge: "Design scaffold",
+      tone: "plan",
+      text: "Generates architecture and starter files, not a compiled game binary. Engine export must happen in the real engine toolchain.",
+    },
+    "vr-game": {
+      badge: "Design scaffold",
+      tone: "plan",
+      text: "Generates VR interaction scaffolds and packaging notes, not a headset-ready build on this host.",
+    }
+  };
+  return guidance[targetId] || guidance["web-app"];
+}
+
 const schema = {
   user: ["id", "name", "email", "plan", "created_at", "updated_at"],
   agentSession: ["id", "user_id", "agent_name", "title", "messages", "created_at", "updated_at"],
@@ -44,6 +99,16 @@ const schema = {
   trainingJob: ["id", "topic", "objective", "base_model", "seed_urls", "allowed_domains", "discovery_queries", "max_pages", "max_depth", "output_format", "dataset_style", "auto_discover", "hf_namespace", "hf_flavor", "hf_timeout", "hf_private_dataset", "hf_private_model", "launch_on_hf", "status", "phase", "progress", "stats", "package", "sources", "examples", "logs", "hf", "last_error", "created_at", "updated_at", "started_at", "finished_at"],
   codingWorkspace: ["id", "project_id", "name", "slug", "adapter", "adapter_status", "status", "last_run_id", "created_at", "updated_at"]
 };
+
+const SWARM_AGENT_LIBRARY = [
+  { id: "builder", name: "Builder", summary: "Baut die App und zieht Features in echten Code.", focus: ["implementation", "delivery", "handoff"] },
+  { id: "fixer", name: "Fixer", summary: "Jagt Bugs, Fehlerzustände und kaputte Flows.", focus: ["bugfixes", "stability", "recovery"] },
+  { id: "architect", name: "Architect", summary: "Prüft Struktur, Datenfluss und Skalierbarkeit.", focus: ["architecture", "boundaries", "refactors"] },
+  { id: "toolsmith", name: "Toolsmith", summary: "Denkt sich hammermässige Tools und Power-Features aus.", focus: ["tools", "automation", "magic"] },
+  { id: "tester", name: "Tester", summary: "Denkt in Prüfpfaden, Edge-Cases und Regressionen.", focus: ["tests", "coverage", "qa"] },
+  { id: "ux", name: "UX Pilot", summary: "Glättet Bedienung, Klarheit und Conversion-Flows.", focus: ["ux", "copy", "flow"] },
+  { id: "security", name: "Security", summary: "Prüft Safety, Rechte und riskante Kanten.", focus: ["security", "hardening", "permissions"] }
+];
 
 const defaultState = {
   user: {
@@ -72,6 +137,10 @@ const defaultState = {
   currentWorkspaceFile: "",
   projectAudit: null,
   builderTarget: "web-app",
+  selectedMainModel: "codex",
+  selectedCodingModel: "codex",
+  builderSwarmEnabled: true,
+  builderSwarmAgents: ["builder", "fixer", "architect", "toolsmith", "tester"],
   adminSecurity: {
     configured: false,
     token: "",
@@ -80,20 +149,52 @@ const defaultState = {
 };
 
 let state = loadState();
+let shouldPersistBootCleanup = false;
+if (state.adminSecurity?.expires_at) {
+  const expiry = Date.parse(state.adminSecurity.expires_at);
+  if (Number.isFinite(expiry) && expiry <= Date.now()) {
+    state.adminSecurity.token = "";
+    state.adminSecurity.expires_at = "";
+    clearAdminProtectedState();
+    shouldPersistBootCleanup = true;
+  }
+}
+if (shouldPersistBootCleanup) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
 let previewObjectUrl = "";
 
 const els = {};
 
 document.addEventListener("DOMContentLoaded", () => {
-  cacheElements();
-  seedIfEmpty();
-  wireEvents();
-  updateAdminButtonLabel();
-  routeTo(location.hash.replace("#", "") || "home");
-  renderAll();
-  greetRick();
-  initializeBackend();
+  selfRepairHostedRuntime().finally(() => {
+    cacheElements();
+    seedIfEmpty();
+    wireEvents();
+    updateAdminButtonLabel();
+    routeTo(location.hash.replace("#", "") || "home");
+    renderAll();
+    greetRick();
+    initializeBackend();
+  });
 });
+
+async function selfRepairHostedRuntime() {
+  try {
+    const lastVersion = localStorage.getItem("hosted-runtime-version") || "";
+    if (lastVersion === HOSTED_RUNTIME_VERSION) return;
+    localStorage.setItem("hosted-runtime-version", HOSTED_RUNTIME_VERSION);
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+    }
+    if (window.caches?.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key).catch(() => false)));
+    }
+  } catch (_) {
+  }
+}
 
 function cacheElements() {
   Object.assign(els, {
@@ -150,7 +251,15 @@ function cacheElements() {
     workspaceFileLabel: document.querySelector("#workspaceFileLabel"),
     workspaceEditor: document.querySelector("#workspaceEditor"),
     workspaceSaveFile: document.querySelector("#workspaceSaveFile"),
+    workspaceRunSwarmButton: document.querySelector("#workspaceRunSwarmButton"),
     workspacePreviewButton: document.querySelector("#workspacePreviewButton"),
+    workspacePreviewPane: document.querySelector("#workspacePreviewPane"),
+    workspaceTerminalForm: document.querySelector("#workspaceTerminalForm"),
+    workspaceTerminalInput: document.querySelector("#workspaceTerminalInput"),
+    workspaceTerminalPayload: document.querySelector("#workspaceTerminalPayload"),
+    workspaceTerminalHints: document.querySelector("#workspaceTerminalHints"),
+    workspaceTerminalOutput: document.querySelector("#workspaceTerminalOutput"),
+    workspaceSwarmOutput: document.querySelector("#workspaceSwarmOutput"),
     workspaceRuns: document.querySelector("#workspaceRuns"),
     workspaceActivity: document.querySelector("#workspaceActivity"),
     auditHero: document.querySelector("#auditHero"),
@@ -214,7 +323,9 @@ function wireEvents() {
   els.trainingForm?.addEventListener("submit", handleTrainingSubmit);
   els.workspaceCreateForm?.addEventListener("submit", createCodingWorkspace);
   els.workspaceSaveFile?.addEventListener("click", saveWorkspaceFile);
+  els.workspaceRunSwarmButton?.addEventListener("click", runWorkspaceSwarm);
   els.workspacePreviewButton?.addEventListener("click", openWorkspacePreview);
+  els.workspaceTerminalForm?.addEventListener("submit", runWorkspaceTerminal);
   document.querySelectorAll("[data-workspace-command]").forEach((button) => {
     button.addEventListener("click", () => runWorkspaceLoop(button.dataset.workspaceCommand));
   });
@@ -399,7 +510,7 @@ function createAnalysisReport(target, analysisType, scan = null) {
   const now = new Date().toISOString();
   const concept = target.title;
   const metadata = scan || fetchPublicPageMetadata(target.url);
-  const imageSignals = analyzeImagePlaceholder(target.uploaded_file_name || target.uploaded_file_type || target.uploaded_file_url);
+  const imageSignals = analyzeImageSignals(target);
   const textSignals = analyzeTextIdea(target.text_input || analysisType);
   const archetype = inferProductArchetype(`${target.url} ${target.text_input} ${analysisType}`);
   const ideas = generateSourceIdeas(target, archetype);
@@ -419,7 +530,7 @@ function createAnalysisReport(target, analysisType, scan = null) {
     legal_inspiration_points: ["General workflow", "Problem category", "User journey logic", "Publicly visible feature pattern", "Business model mechanics", "Interaction principles"],
     evidence: scan?.evidence || [],
     reusable_patterns: scan?.reusable_patterns || [],
-    scan_limitations: scan?.limitations || ["Fallback analysis was used; public source evidence was not fetched."],
+    scan_limitations: scan?.limitations || buildScanLimitations(target),
     source_scan: scan ? { id: scan.id, source_url: scan.source_url, fetched_at: scan.fetched_at, word_count: scan.word_count, legal_boundary: scan.legal_boundary } : null,
     upgrade_opportunities: ideas.upgrades,
     nemesis_upgrade_idea: ideas.nemesis,
@@ -501,10 +612,31 @@ function uploadScreenshotPlaceholder(fileLabel) {
   };
 }
 
-function analyzeImagePlaceholder(fileLabel) {
+function analyzeImageSignals(target = {}) {
+  const fileLabel = target.uploaded_file_name || target.uploaded_file_type || target.uploaded_file_url;
   const upload = uploadScreenshotPlaceholder(fileLabel);
   if (!upload.stored) return [];
-  return ["Uploaded image preview", "Visual hierarchy scan placeholder", "Brand and layout inspiration check placeholder"];
+  const extension = String(target.uploaded_file_name || "").split(".").pop()?.toLowerCase() || "image";
+  const sizeKb = Math.max(1, Math.round(Number(target.uploaded_file_size || 0) / 1024));
+  const type = String(target.uploaded_file_type || "").toLowerCase();
+  const surface = /(phone|mobile|android|iphone)/.test(`${target.text_input || ""} ${target.uploaded_file_name || ""}`.toLowerCase())
+    ? "Mobile UI reference"
+    : /(dashboard|desktop|web|landing)/.test(`${target.text_input || ""} ${target.uploaded_file_name || ""}`.toLowerCase())
+      ? "Desktop/web UI reference"
+      : "UI screenshot reference";
+  return [
+    `Screenshot input attached (${extension}, ~${sizeKb} KB)`,
+    surface,
+    type.startsWith("image/") ? `Image file detected: ${type}` : "Image file supplied for manual UI inspiration"
+  ];
+}
+
+function buildScanLimitations(target = {}) {
+  const limitations = ["Fallback analysis was used; public source evidence was not fetched."];
+  if (target.uploaded_file_name || target.uploaded_file_type || target.uploaded_file_url) {
+    limitations.push("No real vision backend is connected yet, so screenshot semantics are inferred from filename/type/context rather than pixel-level understanding.");
+  }
+  return limitations;
 }
 
 function analyzeTextIdea(text) {
@@ -538,6 +670,9 @@ function localRickCortex(prompt) {
   const target = state.targets.find((item) => item.id === report.target_id);
   const product = generateProductPackage(blueprint, report, prompt);
   const tactical = generateTacticalIdeas(prompt, report);
+  const model = getModelById(state.selectedMainModel);
+  const appFocus = prompt.trim().slice(0, 120) || (target?.title || blueprint.project_name);
+  const nextUpgrade = tactical[0] || "A clearer, stronger original implementation";
   remember(`Rick-C63 worked on ${target?.title || blueprint.project_name}: ${prompt.slice(0, 140)}`);
   state.currentReportId = report.id;
   state.currentBlueprintId = blueprint.id;
@@ -545,18 +680,18 @@ function localRickCortex(prompt) {
 
   if (intent === "explain-blueprint") {
     return {
-      answer: `Alright Elija, kurz und sauber: Ein Blueprint ist kein komisches Business-Wort. Es ist der Bauplan deiner App.\n\nEr sagt:\n1. Welches Problem die App loest.\n2. Welche Seiten sie braucht.\n3. Welche Daten gespeichert werden.\n4. Welche API-Routen noetig sind.\n5. Welche Features zuerst gebaut werden.\n6. Wie aus der Idee eine echte Software wird.\n\nRick-C63 Uebersetzung: Blueprint = Bauzeichnung fuer Software. Ohne Blueprint baut man chaotisch. Mit Blueprint baut man wie ein Architekt.\n\nHier ist was wir daraus bauen koennen: ${blueprint.project_name}. Naechster Schritt: Klick auf Generate Software im Builder.`
+      answer: `${rickVoiceLine("analysis")}\n\nModel-Profil: ${model.label} (Standalone-Modus).\n\nBlueprint = der Bauplan deiner App: Problem, Seiten, Daten, API-Routen, Features und die Reihenfolge fuer den Bau.\n\nFuer **${blueprint.project_name}** ist der naechste saubere Schritt: Builder oeffnen, Bauplan speichern, Generate Software druecken und danach das PWA-Paket exportieren.`
     };
   }
 
   if (intent === "build") {
     return {
-      answer: `${rickVoiceLine("build")}\n\nRick-C63 Builder Mode aktiv.\n\nIch habe aus deinem Auftrag ein ganzes Produktpaket gemacht: ${product.name}.\n\n### Das Produkt\n${product.pitch}\n\n### Die 3 Versionen\n${product.versions.map((item) => `- ${item.name}: ${item.summary}`).join("\n")}\n\n### Was verbunden werden kann\n${product.connections.map((item) => `- ${item}`).join("\n")}\n\n### Warum das funktioniert\nDas ist nicht nur eine Idee, sondern ein System: Eingabe rein, Analyse raus, Entscheidung speichern, Produktpaket erzeugen, naechsten Bauschritt starten. So baut man keine Luftschloesser, sondern Maschinen mit Strom im Keller.\n\n### Naechste 3 Smart Moves\n1. Im Builder auf Generate Software klicken.\n2. Das Produktpaket speichern und mit deinen Seiten verbinden.\n3. Danach lokalen Rick ueber Ollama anbinden, damit er wirklich lange, kluge Software-Sessions fahren kann.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+      answer: `${rickVoiceLine("build")}\n\nModel-Profil: ${model.label} als Hauptmodell.\n\nIch baue gerade auf Basis von **${appFocus}** eine verbesserte Original-App, nicht nur ein Geruest.\n\n### Konkreter Upgrade-Fokus\n- ${nextUpgrade}\n- ${tactical[1] || "Sharper user flow"}\n- ${tactical[2] || "Cleaner delivery path"}\n\n### Was Generate Software jetzt liefern soll\n- direkt benutzbare Standalone-App\n- gespeicherte lokale Daten\n- bessere Struktur als die Ursprungs-App\n- PWA-Export fuer PWABuilder\n\n### Nächster Schritt\n1. Generate Software\n2. Ergebnis pruefen\n3. Export / Send fuer PWABuilder`
     };
   }
 
   return {
-    answer: `${rickVoiceLine("analysis")}\n\nIch habe den Kontext verstanden: ${target?.title || "deine Idee"}.\n\n### Was ich darin sehe\n${report.summary}\n\n### 3 starke Richtungen\n${tactical.map((item, index) => `${index + 1}. ${item}`).join("\n")}\n\n### Die legale Version\nWir kopieren keine Namen, Logos, Texte, Layouts oder Code. Wir nehmen nur die Mechanik: Problem erkennen, Workflow verstehen, eigene Version bauen.\n\n### Drei Versionen, damit der Kopf nicht explodiert\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Produktpaket\n${product.pitch}\n\n### Rick-C63 Gedächtnis\nIch habe dieses Projekt gespeichert. Neue URLs im Chat werden als neue Projekte angelegt; alte Projekte kannst du im Empire Dashboard wieder öffnen.\n\n[Create Blueprint] [Build MVP Plan] [Add to Empire Dashboard]`
+    answer: `${rickVoiceLine("analysis")}\n\nModel-Profil: ${model.label} (Standalone-Modus, kein Key-Leak nach außen).\n\nIch arbeite gerade an **${target?.title || "deiner Idee"}**. Dein letzter Fokus war: **${appFocus}**.\n\n### Was ich konkret verbessern würde\n1. ${tactical[0] || "Bessere Kernfunktion"}\n2. ${tactical[1] || "Klareres UI"}\n3. ${tactical[2] || "Sauberer Export"}\n\n### Aktuelles Produktziel\n- MVP: ${product.versions[0].summary}\n- Premium: ${product.versions[1].summary}\n- Empire: ${product.versions[2].summary}\n\n### Nächste sinnvolle Aktion\n${prompt.toLowerCase().includes("ui") || prompt.toLowerCase().includes("design") ? "Ich würde als Nächstes direkt das Interface schärfen und den Flow entmüllen." : "Ich würde als Nächstes den Generate-Flow weiter vertiefen, damit die Ausgabe näher an eine vollständige App rückt."}`
   };
 }
 
@@ -883,60 +1018,82 @@ function generateProductPackage(blueprint, report, prompt = "") {
   const name = blueprint.project_name || "Erleuchtung Generated App";
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "erleuchtung-app";
   const target = buildTargets.find((item) => item.id === state.builderTarget) || buildTargets[0];
+  const blueprintFeatures = Array.isArray(blueprint.features) && blueprint.features.length ? blueprint.features : ["Saved dashboard", "Generator flow", "Project memory", "Export path"];
+  const blueprintPages = Array.isArray(blueprint.frontend_pages) && blueprint.frontend_pages.length ? blueprint.frontend_pages : ["Dashboard", "Builder", "Projects"];
+  const swarmAgents = getActiveBuilderSwarmAgents();
+  const swarmEnabled = Boolean(state.builderSwarmEnabled && swarmAgents.length);
+  const swarmModules = swarmEnabled ? swarmAgents.map((agent) => `${agent.name} swarm lane for ${agent.focus.slice(0, 2).join(" + ")}`) : [];
   return {
     name,
     slug,
     type: target.label,
     buildTarget: target,
     deliveryLevel: target.level,
+    modelSelection: {
+      main: getModelById(state.selectedMainModel),
+      coding: getModelById(state.selectedCodingModel)
+    },
+    swarm: {
+      enabled: swarmEnabled,
+      agents: swarmAgents,
+      summary: swarmEnabled ? `${swarmAgents.length} specialist agents support generation, fixes, architecture and feature invention.` : "Single-agent generation mode."
+    },
     pitch: `${name} is a saved software product concept that turns ${report.summary.toLowerCase()} Rick-C63 keeps it legal, buildable and connected to your Empire system.`,
     versions: [
-      { name: "MVP", summary: blueprint.features.slice(0, 4).join(", ") },
+      { name: "MVP", summary: blueprintFeatures.slice(0, 4).join(", ") },
       { name: "Premium", summary: "Accounts, project memory, saved generators, polished dashboards and exportable product packages." },
       { name: "Empire", summary: "Local LLM agent, visual builder, page connections, automated development loops and launch monitoring." }
     ],
-    modules: [
-      "Frontend app shell with dashboard, agent lab, generator and project pages",
-      "Local Rick-C63 Cortex for offline idea generation",
+    modules: [...new Set([
+      ...blueprintFeatures,
+      ...swarmModules,
       "Persistent project memory with saved reports, blueprints and product packages",
       "Legal safety layer before every risky request",
       "Product generator that creates a complete app package instead of loose files"
-    ],
+    ])],
     data: {
       tables: Object.keys(schema),
       primaryProject: blueprint.project_name,
       rememberedFrom: prompt || report.summary
     },
     routes: blueprint.api_routes,
-    pages: blueprint.frontend_pages,
+    pages: blueprintPages,
     connections: [
       "Connect as a new page inside Erleuchtung",
       "Connect to Empire Dashboard as a saved product",
       "Connect to Rick-C63 memory so future chats know the project",
-      "Later connect to a real local build workspace"
+      "Connect directly into a reusable local coding workspace",
+      ...(swarmEnabled ? ["Connect builder swarm lanes so specialists can keep pushing the generated app"] : [])
     ],
     buildPhases: [
       `Phase 1: Lock the ${target.label} blueprint and save it`,
+      ...(swarmEnabled ? [`Phase 1.5: Launch ${swarmAgents.map((agent) => agent.name).join(", ")} across the swarm lanes`] : []),
       `Phase 2: Generate ${target.output}`,
-      "Phase 3: Review the working prototype and implementation package",
-      "Phase 4: Continue the development loop with Rick-C63 and a coding workspace",
+      `Phase 3: ${swarmEnabled ? "Merge builder/fixer/architect/tool ideas into " : "Review "}the working prototype and implementation package`,
+      "Phase 4: Reopen the product inside Rick-C63's coding workspace loop",
       "Phase 5: Test, package and deploy through the target toolchain"
     ],
     starterFiles: buildStarterFiles(slug, blueprint, report, prompt)
   };
 }
 
+function getActiveBuilderSwarmAgents() {
+  const ids = Array.isArray(state.builderSwarmAgents) ? state.builderSwarmAgents : [];
+  return SWARM_AGENT_LIBRARY.filter((agent) => ids.includes(agent.id));
+}
+
 function buildStarterFiles(slug, blueprint, report, prompt) {
+  const swarmAgents = getActiveBuilderSwarmAgents();
   return [
     {
       path: `${slug}/README.md`,
       purpose: "Explains the generated software and how to run it.",
-      code: `# ${blueprint.project_name}\n\n${blueprint.tagline}\n\nGenerated by Rick-C63 from: ${prompt || report.summary}\n\n## MVP\n${blueprint.features.map((item) => `- ${item}`).join("\n")}\n`
+      code: `# ${blueprint.project_name}\n\n${blueprint.tagline}\n\nGenerated by Rick-C63 from: ${prompt || report.summary}\n\n## MVP\n${blueprint.features.map((item) => `- ${item}`).join("\n")}\n\n## Agent Swarm\n${swarmAgents.length ? swarmAgents.map((agent) => `- ${agent.name}: ${agent.summary}`).join("\n") : "- Swarm disabled"}\n`
     },
     {
       path: `${slug}/src/app.js`,
       purpose: "Main local app logic.",
-      code: `const appName = ${JSON.stringify(blueprint.project_name)};\nconst features = ${JSON.stringify(blueprint.features, null, 2)};\n\nexport function startApp() {\n  return { appName, features, status: "MVP ready to implement" };\n}\n`
+      code: `const appName = ${JSON.stringify(blueprint.project_name)};\nconst features = ${JSON.stringify(blueprint.features, null, 2)};\nconst swarmAgents = ${JSON.stringify(swarmAgents, null, 2)};\n\nexport function startApp() {\n  return { appName, features, swarmAgents, status: "MVP ready to implement" };\n}\n`
     },
     {
       path: `${slug}/src/rick-c63-cortex.js`,
@@ -947,12 +1104,17 @@ function buildStarterFiles(slug, blueprint, report, prompt) {
       path: `${slug}/src/schema.json`,
       purpose: "Database shape for the future backend.",
       code: JSON.stringify(schema, null, 2)
+    },
+    {
+      path: `${slug}/src/swarm-agents.json`,
+      purpose: "Saved builder-swarm roles for specialist execution.",
+      code: JSON.stringify(swarmAgents, null, 2)
     }
   ];
 }
 
 async function generateProductBuild() {
-  if (!(await requireAdminAccess("Software-Generierung"))) return;
+  if (api.available && !(await requireAdminAccess("Software-Generierung"))) return;
   const report = getCurrentReport();
   const blueprint = getCurrentBlueprint() || createBlueprintFromReport(report);
   if (!report || !blueprint) {
@@ -971,52 +1133,254 @@ async function generateProductBuild() {
     return;
   }
   const product = generateProductPackage(blueprint, report, "Builder button");
-  saveProductPackage(product, blueprint, report);
+  const project = saveProductPackage(product, blueprint, report);
   let build = null;
+  let linkedWorkspace = null;
   els.builderOutput.innerHTML = `<div class="builder-explain">Rick-C63 baut jetzt das ${safe(product.buildTarget.label)}-Paket. Lieferstufe: ${safe(product.deliveryLevel)}.</div>`;
   if (api.available) {
     const response = await apiPost("/api/product/build", { product });
     build = response?.build || null;
-    if (build) {
-      product.build = build;
-      saveProductPackage(product, blueprint, report);
-    }
+    linkedWorkspace = await ensureGeneratedProductWorkspace(project, blueprint, product);
+  } else {
+    build = createLocalGeneratedBuild(product);
+  }
+  if (build) {
+    product.build = build;
+    saveProductPackage(product, blueprint, report, { build, linkedWorkspaceId: linkedWorkspace?.id || null });
   }
   const html = renderProductPackage(product);
-  const buildHtml = build ? renderBuildResult(build) : "<p>Frontend-only mode: Produktpaket gespeichert. Starte den Backend-Server, damit echte Software erzeugt wird.</p>";
+  const buildHtml = build ? renderBuildResult(build, { project, workspace: linkedWorkspace }) : "<p>Build fehlgeschlagen.</p>";
   els.builderOutput.innerHTML = `${html}${buildHtml}`;
   wireBuildPreviewButtons(els.builderOutput);
   openModal("Rick-C63 Software Generator", `${html}${buildHtml}`);
   wireBuildPreviewButtons(els.modalBody);
-  toast(build ? "Software generiert. Du kannst sie jetzt öffnen." : "Produktpaket gespeichert. Backend starten fuer echte Software.");
+  wireBuildActionButtons(els.builderOutput);
+  wireBuildActionButtons(els.modalBody);
+  toast(build?.status === "ready"
+    ? (linkedWorkspace ? "Software generiert und direkt mit Nemesis/Empire-Workspace verbunden." : (build.mode === "browser-standalone" ? "Fertige Standalone-App im Browser gebaut." : "Software generiert. Du kannst sie jetzt öffnen."))
+    : "Preview-Scaffold generiert. Echte Ziel-Binaries brauchen weiter die passende Toolchain.");
 }
 
-function renderBuildResult(build) {
+function renderBuildResult(build, context = {}) {
+  const ready = build.status === "ready";
+  const openLabel = ready ? "Open Software" : "Open Preview Package";
+  const downloadButton = build.downloadUrl
+    ? `<a class="secondary-button" href="${build.downloadUrl}" download="${safe(build.downloadName || "generated-app.html")}">Download App</a>`
+    : "";
+  const project = context.project || null;
+  const workspace = context.workspace || null;
+  const nemesisCard = project ? `<div class="mini-card"><strong>Nemesis / Empire Link</strong><p>${safe(project.name || "Untitled project")}</p><p><strong>Status:</strong> ${safe(workspace ? "Workspace linked" : (project.status || "Building"))}</p><p><strong>Next step:</strong> ${safe(workspace ? "Open the linked workspace and continue editing/testing." : (project.next_step || "Open the project in Empire."))}</p><div class="button-row">${workspace ? `<button class="secondary-button" data-open-workspace-id="${safe(workspace.id)}">Open linked Workspace</button>` : ""}<button class="secondary-button" data-route-empire="true">Open Empire Project</button></div></div>` : "";
   return `<div class="builder-output">
-    <h4>Fertige Software</h4>
-    <p>Rick-C63 hat eine direkt öffnbare App gebaut.</p>
+    <h4>${ready ? "Fertige Software" : "Preview + Scaffold"}</h4>
+    <p>${safe(build.detail || (ready ? "Rick-C63 hat eine direkt öffnbare App gebaut." : "Rick-C63 hat ein ehrliches Vorschau-/Scaffold-Paket gebaut."))}</p>
     <div class="button-row">
-      <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">Open Software</a>
+      <a class="primary-button" href="${build.url}" target="_blank" rel="noopener">${openLabel}</a>
       <button class="secondary-button" data-preview-url="${build.url}">Preview Here</button>
+      ${downloadButton}
     </div>
-    <p><strong>Ordner:</strong> ${build.dir}</p>
-    <p><strong>Start:</strong> ${build.entry}</p>
+    <p><strong>Build-Typ:</strong> ${safe(build.label || build.status || "preview")}</p>
+    <p><strong>Ordner:</strong> ${safe(build.dir || "browser-memory")}</p>
+    <p><strong>Start:</strong> ${safe(build.entry || "in-browser")}</p>
+    ${nemesisCard}
   </div>`;
+}
+
+async function ensureGeneratedProductWorkspace(project, blueprint, product) {
+  if (!api.available || !project?.id || !blueprint) return null;
+  const sync = await apiPost("/api/db/sync", { db: state });
+  if (!sync?.ok) return null;
+  await refreshWorkspaces();
+  const existingWorkspace = (state.workspaces || []).find((item) => item.project_id === project.id && item.adapter === "web-pwa");
+  if (existingWorkspace?.id) {
+    project.status = "Workspace Linked";
+    project.next_step = "Open the linked workspace, verify the preview and continue implementation there.";
+    project.updated_at = new Date().toISOString();
+    saveState();
+    return existingWorkspace;
+  }
+  const workspaceName = `${blueprint.project_name || product.name} Workspace`;
+  const response = await apiPost("/api/workspaces", {
+    name: workspaceName,
+    project_id: project.id,
+    adapter: "web-pwa"
+  });
+  const workspace = response?.workspace || null;
+  if (workspace?.id) {
+    state.currentWorkspaceId = workspace.id;
+    state.currentWorkspaceFile = "";
+    project.status = "Workspace Linked";
+    project.next_step = "Open the linked workspace, verify the preview and continue implementation there.";
+    project.updated_at = new Date().toISOString();
+    await refreshWorkspaces(workspace.id);
+    saveState();
+  }
+  return workspace;
+}
+
+function createLocalGeneratedBuild(product) {
+  const standalone = createStandaloneGeneratedApp(product);
+  return {
+    status: "ready",
+    label: "Standalone generated app",
+    detail: "Die App wurde komplett im Browser gebaut: direkt öffnbar, speicherbar und ohne lokalen Node-Server benutzbar. Backend-only Extras wie Training/Admin-Sync bleiben separat.",
+    mode: "browser-standalone",
+    dir: "browser-memory",
+    entry: `${product.slug || 'generated-app'}.html`,
+    url: standalone.url,
+    downloadUrl: standalone.url,
+    downloadName: standalone.filename
+  };
+}
+
+function createStandaloneGeneratedApp(product) {
+  const expanded = expandGeneratedProduct(product);
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(expanded.name)}</title>
+  <style>${standaloneProductCss(expanded)}</style>
+</head>
+<body>
+  <div class="cosmos"></div>
+  <header>
+    <strong>${escapeHtml(expanded.name)}</strong>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Generated by Rick-C63</p>
+      <h1>${escapeHtml(expanded.name)}</h1>
+      <p>${escapeHtml(expanded.pitch || "Generated software product.")}</p>
+      <p class="delivery">${escapeHtml(expanded.buildTarget?.label || expanded.type || "Web App")} / Complete standalone app</p>
+      <div class="actions">
+        <button id="saveProject">Save Project</button>
+        <button id="generatePlan">Generate Plan</button>
+        <button id="exportSummary">Export JSON</button>
+      </div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="workspace">
+      <aside>
+        <h2>Screens</h2>
+        <div id="screens"></div>
+      </aside>
+      <section>
+        <h2>Live Builder</h2>
+        <label>Project note<textarea id="note" rows="5" placeholder="Describe the next feature..."></textarea></label>
+        <button id="addNote">Add Note</button>
+        <div id="notes"></div>
+        <div class="inline-form">
+          <label>Project record title<input id="recordTitle" type="text" placeholder="e.g. Customer portal"></label>
+          <label>Status<select id="recordStatus"><option>Planned</option><option>In Progress</option><option>Ready</option></select></label>
+          <button id="addRecord">Add Record</button>
+        </div>
+      </section>
+    </section>
+    <section class="grid two">
+      <div class="card-panel"><h2>Current Screen</h2><div id="screenDetail"></div></div>
+      <div class="card-panel"><h2>Build Plan</h2><div id="plan"></div></div>
+    </section>
+    <section>
+      <h2>Project Records</h2>
+      <div class="grid two" id="records"></div>
+    </section>
+    <section>
+      <h2>Modules</h2>
+      <div id="modules"></div>
+    </section>
+  </main>
+  <script>${standaloneProductJs(expanded).replaceAll('</script>', '<\\/script>')}</script>
+</body>
+</html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  return {
+    filename: `${expanded.slug || 'generated-app'}.html`,
+    url: URL.createObjectURL(blob)
+  };
+}
+
+function expandGeneratedProduct(product) {
+  const slug = String(product.slug || product.name || "generated-app")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "generated-app";
+  const seed = hashString(`${product.name} ${product.pitch}`);
+  const palettes = [
+    { bg: "#061019", accent: "#53ff9d", second: "#1dbdff", third: "#ff3edb" },
+    { bg: "#100813", accent: "#ffd166", second: "#8d5cff", third: "#53ff9d" },
+    { bg: "#070b1c", accent: "#1dbdff", second: "#ff5a7a", third: "#ffd166" },
+    { bg: "#08120d", accent: "#53ff9d", second: "#ffd166", third: "#1dbdff" }
+  ];
+  const palette = palettes[seed % palettes.length];
+  const modules = product.modules?.length ? product.modules : ["Intake", "Generator", "Memory", "Dashboard"];
+  const pages = product.pages?.length ? product.pages : ["Dashboard", "Generator", "Projects"];
+  const features = modules.slice(0, 6).map((module, index) => ({
+    id: `feature-${index + 1}`,
+    title: module,
+    description: `A working ${module.toLowerCase()} module connected to ${product.name}.`,
+    status: index < 2 ? "ready" : "next"
+  }));
+  return {
+    ...product,
+    slug,
+    palette,
+    features,
+    appStateKey: `generated-${slug}`,
+    screens: pages.map((page, index) => ({
+      name: page,
+      purpose: index === 0 ? "Main command center" : `Focused ${page.toLowerCase()} workspace`
+    }))
+  };
+}
+
+function standaloneProductCss(product) {
+  const palette = product.palette || { bg: "#050610", accent: "#53ff9d", second: "#1dbdff", third: "#ff3edb" };
+  return `:root{--bg:${palette.bg};--accent:${palette.accent};--second:${palette.second};--third:${palette.third};--text:#f3fbff;--muted:#a9b8c9;--panel:rgba(255,255,255,.07);--line:rgba(155,231,255,.22)}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 10%,color-mix(in srgb,var(--second) 28%,transparent),transparent 30%),radial-gradient(circle at 80% 0,color-mix(in srgb,var(--third) 22%,transparent),transparent 24%),var(--bg);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif}.cosmos{position:fixed;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,.75) 0 1px,transparent 1px);background-size:120px 120px;opacity:.22;animation:drift 34s linear infinite}header{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}nav{display:flex;gap:8px;overflow:auto}nav button,.actions button,#addNote,#addRecord{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:10px 12px;font-weight:800;cursor:pointer}nav button.active{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}main{width:min(1180px,calc(100% - 28px));margin:0 auto;padding:38px 0 70px}.hero{min-height:360px;display:grid;align-content:center}.eyebrow{color:var(--accent);font-weight:900;text-transform:uppercase;letter-spacing:.08em}h1{max-width:980px;margin:.1em 0;font-size:clamp(42px,9vw,96px);line-height:.94;letter-spacing:0}h2,h3{margin:0 0 14px}.hero p{max-width:760px;color:#dceeff;font-size:20px;line-height:1.55}.actions{display:flex;flex-wrap:wrap;gap:10px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.workspace>aside,.workspace>section,.card-panel,main>section:not(.hero):not(.grid){border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 20px 80px rgba(0,0,0,.28);padding:18px}.workspace{display:grid;grid-template-columns:320px 1fr;gap:14px;margin-top:14px}.screen,.module,.note,.record,.plan-step{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:rgba(0,0,0,.18)}textarea,input,select{width:100%;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.32);color:var(--text);padding:12px;margin:8px 0 10px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:900}.muted{color:var(--muted)}.inline-form{display:grid;grid-template-columns:1.2fr .8fr auto;gap:10px;align-items:end}.detail-list{display:grid;gap:10px}.detail-item{border:1px solid var(--line);border-radius:8px;padding:12px;background:rgba(0,0,0,.18)}@media(max-width:800px){header{display:grid}.grid,.grid.two,.workspace,.inline-form{grid-template-columns:1fr}h1{font-size:clamp(38px,16vw,70px)}}@keyframes drift{to{transform:translate(-120px,120px)}}`;
+}
+
+function standaloneProductJs(product) {
+  return `const product=${JSON.stringify(product)};const stateKey=product.appStateKey;const saved=JSON.parse(localStorage.getItem(stateKey)||'{"notes":[],"records":[],"saves":0,"activeScreen":""}');const $=(id)=>document.querySelector(id);const escape=(value)=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');const persist=()=>localStorage.setItem(stateKey,JSON.stringify(saved));const activeScreen=()=>saved.activeScreen||product.screens[0]?.name||'Dashboard';if(!Array.isArray(saved.notes))saved.notes=[];if(!Array.isArray(saved.records))saved.records=[];if(!saved.activeScreen)saved.activeScreen=activeScreen();function renderNav(){ $('#nav').innerHTML=product.screens.map(s=>'<button data-screen="'+escape(s.name)+'" class="'+(s.name===activeScreen()?'active':'')+'">'+escape(s.name)+'</button>').join(''); $('#nav').querySelectorAll('[data-screen]').forEach((button)=>button.addEventListener('click',()=>{saved.activeScreen=button.dataset.screen;persist();renderNav();renderScreenDetail();})); }function renderMetrics(){ $('#metrics').innerHTML=[['Versions',product.versions.length],['Modules',product.modules.length],['Saved',saved.saves||0]].map(([k,v])=>'<div class="card"><span class="status">'+k+'</span><h2>'+v+'</h2></div>').join(''); }function renderScreens(){ $('#screens').innerHTML=product.screens.map(s=>'<div class="screen"><strong>'+escape(s.name)+'</strong><p>'+escape(s.purpose)+'</p></div>').join(''); }function renderModules(){ $('#modules').innerHTML=product.features.map(f=>'<div class="module"><span class="status">'+escape(f.status)+'</span><h3>'+escape(f.title)+'</h3><p>'+escape(f.description)+'</p></div>').join(''); }function renderNotes(){ $('#notes').innerHTML=saved.notes.map(n=>'<div class="note">'+escape(n)+'</div>').join('') || '<p>No notes yet.</p>'; }function renderPlan(){ const target=document.querySelector('#plan'); if(!target) return; target.innerHTML=product.buildPhases.map((step,index)=>'<div class="plan-step"><span class="status">Step '+(index+1)+'</span><strong>'+escape(step)+'</strong></div>').join(''); }function renderRecords(){ const target=document.querySelector('#records'); if(!target) return; target.innerHTML=saved.records.length?saved.records.map((record,index)=>'<div class="record"><span class="status">'+escape(record.status)+'</span><h3>'+escape(record.title)+'</h3><p class="muted">'+escape(record.summary||'No summary yet.')+'</p><small>Record '+(index+1)+'</small></div>').join(''):'<div class="card-panel"><p>No project records yet. Add one below.</p></div>'; }function renderScreenDetail(){ const current=product.screens.find((screen)=>screen.name===activeScreen())||product.screens[0]; const target=document.querySelector('#screenDetail'); if(!target||!current) return; const matchingModules=product.features.slice(0,3).map((feature)=>'<div class="detail-item"><strong>'+escape(feature.title)+'</strong><p>'+escape(feature.description)+'</p></div>').join(''); target.innerHTML='<div class="detail-list"><div class="detail-item"><span class="status">Current screen</span><h3>'+escape(current.name)+'</h3><p>'+escape(current.purpose)+'</p></div>'+matchingModules+'</div>'; }renderNav();renderMetrics();renderScreens();renderModules();renderNotes();renderPlan();renderRecords();renderScreenDetail();$('#addNote').addEventListener('click',()=>{ const value=$('#note').value.trim(); if(!value)return; saved.notes.unshift(value); $('#note').value=''; persist(); renderNotes();});document.querySelector('#addRecord')?.addEventListener('click',()=>{ const title=document.querySelector('#recordTitle')?.value.trim(); if(!title)return; const status=document.querySelector('#recordStatus')?.value||'Planned'; saved.records.unshift({title,status,summary:'Created inside generated app.'}); document.querySelector('#recordTitle').value=''; persist(); renderRecords();});$('#saveProject').addEventListener('click',()=>{ saved.saves=(saved.saves||0)+1; persist(); renderMetrics();});$('#generatePlan').addEventListener('click',()=>{ const plan=product.buildPhases.map((p,i)=>(i+1)+'. '+p).join('\\n'); saved.notes.unshift('Generated plan:\\n'+plan); persist(); renderNotes(); renderPlan();});$('#exportSummary').addEventListener('click',()=>{ const blob=new Blob([JSON.stringify({...product,savedState:saved},null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=product.slug+'-product.json'; a.click(); });`;
 }
 
 function wireBuildPreviewButtons(root) {
   root.querySelectorAll("[data-preview-url]").forEach((button) => {
     button.addEventListener("click", () => {
       const url = button.dataset.previewUrl;
-      const frame = document.createElement("iframe");
+      const container = button.closest(".builder-output");
+      if (!container) return;
+      let frame = container.querySelector("iframe[data-generated-preview='true']");
+      if (!frame) {
+        frame = document.createElement("iframe");
+        frame.dataset.generatedPreview = "true";
+        frame.title = "Generated software preview";
+        frame.style.width = "100%";
+        frame.style.minHeight = "620px";
+        frame.style.border = "1px solid var(--line)";
+        frame.style.borderRadius = "8px";
+        frame.style.marginTop = "14px";
+        container.appendChild(frame);
+      }
       frame.src = url;
-      frame.title = "Generated software preview";
-      frame.style.width = "100%";
-      frame.style.minHeight = "620px";
-      frame.style.border = "1px solid var(--line)";
-      frame.style.borderRadius = "8px";
-      frame.style.marginTop = "14px";
-      button.closest(".builder-output").appendChild(frame);
+    });
+  });
+}
+
+function wireBuildActionButtons(root) {
+  root.querySelectorAll("[data-open-workspace-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.currentWorkspaceId = button.dataset.openWorkspaceId;
+      state.currentWorkspaceFile = "";
+      await loadCurrentWorkspace();
+      routeTo("workspace");
+      closeModal();
+    });
+  });
+  root.querySelectorAll("[data-route-empire]").forEach((button) => {
+    button.addEventListener("click", () => {
+      routeTo("empire");
+      closeModal();
     });
   });
 }
@@ -1030,7 +1394,7 @@ function openExportHub() {
   }
   const product = generateProductPackage(blueprint, report, "Export Hub");
   const html = `<div class="export-hub">
-    <p>Wähle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. EXE erzeugt eine echte Windows-Datei und signiert sie automatisch, sobald dein Authenticode-Zertifikat eingerichtet ist. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
+    <p>Wähle, was Rick-C63 exportieren soll. Web/Codex/Cursor funktionieren sofort. Windows EXE wird ehrlich nur dann gebaut, wenn der Server auf einem passenden Windows-Host mit Toolchain läuft; sonst bekommst du stattdessen einen klaren Build-Hinweis. AAB bleibt ein vorbereitetes Android-Build-Ziel.</p>
     <label><input type="checkbox" value="web" checked> Web Software</label>
     <label><input type="checkbox" value="codex" checked> Send to Codex package</label>
     <label><input type="checkbox" value="cursor" checked> Send to Cursor package</label>
@@ -1045,12 +1409,20 @@ function openExportHub() {
 }
 
 async function exportCurrentProject(product) {
-  if (!(await requireAdminAccess("Projekt-Export"))) return;
+  if (api.available && !(await requireAdminAccess("Projekt-Export"))) return;
   const checked = [...document.querySelectorAll(".export-hub input:checked")].map((input) => input.value);
   const result = document.querySelector("#exportResult");
   result.innerHTML = "<p>Rick-C63 packt dein Projekt. Bitte kurz nicht an der Realität wackeln.</p>";
   if (!api.available) {
-    result.innerHTML = "<p>Backend ist nicht online. Starte <code>node server.js</code>, dann kann Rick-C63 ZIPs bauen.</p>";
+    const bundle = await createStandalonePwaBundle(product, checked);
+    downloadBlob(bundle.filename, bundle.blob, bundle.mimeType);
+    result.innerHTML = `<div class="builder-output">
+      <h4>PWA-Paket bereit</h4>
+      <p>Standalone-Export gebaut. Dieses ZIP kannst du direkt fuer PWABuilder verwenden.</p>
+      <p><strong>Datei:</strong> ${safe(bundle.filename)}</p>
+      <p><strong>Enthalten:</strong> index.html, app.js, styles.css, manifest.webmanifest, sw.js, icons, product.json</p>
+    </div>`;
+    toast("PWA-Export fuer PWABuilder heruntergeladen.");
     return;
   }
   const response = await apiPost("/api/export/project", { product, formats: checked });
@@ -1058,13 +1430,26 @@ async function exportCurrentProject(product) {
     result.innerHTML = "<p>Export fehlgeschlagen. Backend prüfen.</p>";
     return;
   }
+  const windowsBlock = response.windowsExe
+    ? (response.windowsExe.ok
+        ? `<p><strong>Windows EXE:</strong> ${response.windowsExe.signature_status || response.windowsExe.status || "built"}</p>
+    <a class="secondary-button" href="${response.windowsExe.url}" download>Download Windows EXE</a>`
+        : `<p><strong>Windows EXE:</strong> ${response.windowsExe.status || "external-build-required"}</p>
+    <p>${response.windowsExe.reason || "Build requires a Windows packaging host."}</p>`)
+    : "";
+  const aabBlock = response.androidAab
+    ? `<p><strong>Android AAB:</strong> ${response.androidAab.status || "external-build-required"}</p>
+    <p>${response.androidAab.reason || "Build requires an Android SDK/Gradle host."}</p>`
+    : "";
   result.innerHTML = `<div class="builder-output">
     <h4>Export bereit</h4>
     <p>Formate: ${response.bundle.formats.join(", ")}</p>
-    ${response.windowsExe ? `<p><strong>Windows EXE:</strong> ${response.windowsExe.signature_status}</p>
-    <a class="secondary-button" href="${response.windowsExe.url}" download>Download Windows EXE</a>` : ""}
+    <p><strong>Lokaler Preview-Typ:</strong> ${safe(response.build.label || response.build.status || "preview")}</p>
+    <p>${safe(response.build.detail || "")}</p>
+    ${windowsBlock}
+    ${aabBlock}
     <a class="primary-button" href="${response.bundle.url}" download>Download ZIP</a>
-    <a class="secondary-button" href="${response.build.url}" target="_blank" rel="noopener">Open Web App</a>
+    <a class="secondary-button" href="${response.build.url}" target="_blank" rel="noopener">${response.build.status === "ready" ? "Open Web App" : "Open Preview Package"}</a>
   </div>`;
   toast("Export ZIP ist bereit.");
 }
@@ -1082,6 +1467,8 @@ function renderProductPackage(product) {
     ${list(product.versions.map((item) => `${item.name}: ${item.summary}`))}
     <h4>Module</h4>
     ${list(product.modules)}
+    <h4>Agenten-Schwarm</h4>
+    ${product.swarm?.enabled ? list(product.swarm.agents.map((agent) => `${agent.name}: ${agent.summary}`)) : "<p>Schwarm deaktiviert.</p>"}
     <h4>Seiten</h4>
     ${list(product.pages)}
     <h4>API-Routen</h4>
@@ -1127,36 +1514,39 @@ async function initializeBackend() {
   api.health = health || null;
   state.projectAudit = buildProjectAudit(health, null);
   if (api.available) {
-    const doctor = await apiGet("/api/doctor");
-    api.doctor = doctor?.doctor || null;
-    state.projectAudit = buildProjectAudit(health, api.doctor);
+    if (state.adminSecurity?.token) {
+      const doctor = await apiGet("/api/doctor");
+      api.doctor = doctor?.doctor || null;
+      state.projectAudit = buildProjectAudit(health, api.doctor);
+    }
     const status = await apiGet("/api/admin/status");
     if (status?.ok) {
       if (!state.adminSecurity) state.adminSecurity = {};
       state.adminSecurity.configured = Boolean(status.configured);
       if (!status.unlocked) {
-        state.adminSecurity.token = "";
-        state.adminSecurity.expires_at = "";
+        clearExpiredAdminClientState();
       }
       updateAdminButtonLabel();
     }
   }
   if (api.available) {
-    const sync = await apiGet("/api/db");
-    if (sync?.db) {
-      state.targets = sync.db.targets || state.targets;
-      state.reports = sync.db.reports || state.reports;
-      state.blueprints = sync.db.blueprints || state.blueprints;
-      state.blueprintVersions = sync.db.blueprintVersions || state.blueprintVersions;
-      state.empireProjects = sync.db.projects || state.empireProjects;
-      state.trainingJobs = sync.db.trainingJobs || state.trainingJobs;
-      state.workspaces = sync.db.workspaces || state.workspaces;
-      state.memories = sync.db.memories || state.memories;
-      state.sessions = sync.db.sessions || state.sessions;
-      saveState();
+    if (state.adminSecurity?.token) {
+      const sync = await apiGet("/api/db");
+      if (sync?.db) {
+        state.targets = sync.db.targets || state.targets;
+        state.reports = sync.db.reports || state.reports;
+        state.blueprints = sync.db.blueprints || state.blueprints;
+        state.blueprintVersions = sync.db.blueprintVersions || state.blueprintVersions;
+        state.empireProjects = sync.db.projects || state.empireProjects;
+        state.trainingJobs = sync.db.trainingJobs || state.trainingJobs;
+        state.workspaces = sync.db.workspaces || state.workspaces;
+        state.memories = sync.db.memories || state.memories;
+        state.sessions = sync.db.sessions || state.sessions;
+        saveState();
+      }
+      await refreshWorkspaces();
     }
-    await refreshWorkspaces();
-    toast(health.ollama?.reachable ? "Backend online. Ollama/Rick-C63 ist verbunden." : "Backend online. Ollama ist noch offline, Fallback aktiv.");
+    toast(health.openai?.configured ? `Backend online. ${health.openai.model || "Codex"} ist verbunden.` : health.ollama?.reachable ? "Backend online. Ollama/Rick-C63 ist verbunden." : "Backend online. Ollama ist noch offline, Fallback aktiv.");
   }
   renderAll();
 }
@@ -1166,8 +1556,12 @@ async function refreshAudit() {
   if (health?.ok) {
     api.available = true;
     api.health = health;
-    const doctor = await apiGet("/api/doctor");
-    api.doctor = doctor?.doctor || null;
+    if (state.adminSecurity?.token) {
+      const doctor = await apiGet("/api/doctor");
+      api.doctor = doctor?.doctor || null;
+    } else {
+      api.doctor = null;
+    }
     state.projectAudit = buildProjectAudit(health, api.doctor);
     saveState();
     renderAll();
@@ -1178,41 +1572,44 @@ async function refreshAudit() {
   state.projectAudit = buildProjectAudit(null, null);
   saveState();
   renderAll();
-  toast("Backend offline. Showing static audit.");
+  toast("Standalone mode aktiv. Live-Backend-Audit ist gerade nicht verbunden.");
 }
 
 function buildProjectAudit(health, doctor) {
   const backendOnline = Boolean(health?.ok);
+  const openaiReady = Boolean(health?.openai?.configured);
   const ollamaReady = Boolean(health?.ollama?.reachable || doctor?.ollama_ready);
   const nodeReady = backendOnline || Boolean(doctor?.node_ready);
-  const doctorOk = doctor?.ok !== false;
+  const doctorAvailable = Boolean(doctor);
+  const doctorOk = doctorAvailable ? doctor?.ok !== false : false;
+  const backendPort = Number(health?.port) || Number(location.port) || 8787;
   const issues = Array.isArray(doctor?.issues) ? doctor.issues : [];
   const repairs = Array.isArray(doctor?.repairs) ? doctor.repairs : [];
   const hardIssues = [
-    !backendOnline ? "Backend is offline when the page is opened as a static file." : "",
-    !ollamaReady ? "Local Ollama/Rick-C63 model is not reachable; AI planning falls back to canned local logic." : "",
+    !backendOnline ? "This session is running in standalone mode. Core UI/build flow still works, but live admin/training sync is unavailable until the configured backend responds." : "",
+    !openaiReady && !ollamaReady ? "No AI backend is reachable; chat/planning falls back to canned local logic." : "",
     "Training and native EXE export still depend on external runtimes and should be verified on every target machine.",
     "Frontend state and backend JSON sync are useful for MVP, but not enough for multi-user production."
   ].filter(Boolean);
   return {
     checked_at: doctor?.checked_at || new Date().toISOString(),
-    score: backendOnline && ollamaReady && doctorOk && !issues.length ? 90 : backendOnline ? 76 : 58,
-    status: backendOnline ? "Running locally" : "Static fallback",
+    score: backendOnline && (openaiReady || ollamaReady) && doctorOk && !issues.length ? 90 : backendOnline ? (doctorAvailable ? 76 : 72) : 58,
+    status: backendOnline ? "Running locally" : "Standalone mode",
     summary: backendOnline
       ? "The local Node app is reachable, browser UI can talk to the backend, and the project is ready for feature hardening."
-      : "The frontend can render without the server, but real audit, training, export and AI routes need npm start.",
+      : "The app still works in standalone mode and can generate complete browser apps, while live audit/training/admin routes wait for the local server.",
     health: [
       { label: "Node server", value: nodeReady ? "Ready" : "Offline", ok: nodeReady },
       { label: "Browser app", value: "Ready", ok: true },
-      { label: "Ollama model", value: ollamaReady ? "Reachable" : "Offline", ok: ollamaReady },
-      { label: "Doctor report", value: doctorOk ? "Clean" : "Issues", ok: doctorOk }
+      { label: "Primary AI", value: openaiReady ? (health?.openai?.model || "Codex") : ollamaReady ? "Ollama" : "Offline", ok: openaiReady || ollamaReady },
+      { label: "Doctor report", value: doctorAvailable ? (doctorOk ? "Clean" : "Issues") : "Locked", ok: doctorAvailable ? doctorOk : false }
     ],
     findings: [
       {
         title: "What works",
         tone: "good",
         items: [
-          "Private repo is cloned locally and runs on port 8787.",
+          `Private repo is cloned locally and runs on port ${backendPort}.`,
           "npm run check validates JavaScript syntax plus navigation, analysis, XSS safety, Audit and API hardening.",
           "Core pages exist: Home, Rick-C63, Reports, Builder, Empire, Training, Legal and Audit.",
           "Backend routes already cover health, doctor, chat, DB sync, products, exports and training jobs.",
@@ -1225,7 +1622,11 @@ function buildProjectAudit(health, doctor) {
       {
         title: "Risks",
         tone: hardIssues.length ? "warn" : "good",
-        items: [...issues, ...hardIssues]
+        items: [
+          ...issues,
+          ...(!doctorAvailable && backendOnline ? ["Detailed doctor diagnostics are locked until admin mode is enabled."] : []),
+          ...hardIssues
+        ]
       },
       {
         title: "Missing to finish",
@@ -1249,6 +1650,24 @@ function buildProjectAudit(health, doctor) {
   };
 }
 
+function clearAdminProtectedState() {
+  api.doctor = null;
+  state.targets = [];
+  state.reports = [];
+  state.blueprints = [];
+  state.blueprintVersions = [];
+  state.empireProjects = [];
+  state.trainingJobs = [];
+  state.workspaces = [];
+  state.memories = [];
+  state.sessions = [];
+  state.currentReportId = null;
+  state.currentBlueprintId = null;
+  state.currentTrainingJobId = null;
+  state.currentWorkspaceId = null;
+  state.currentWorkspaceFile = "";
+}
+
 function updateAdminButtonLabel() {
   if (!els.adminAccessButton) return;
   const unlocked = Boolean(state.adminSecurity?.token);
@@ -1257,7 +1676,7 @@ function updateAdminButtonLabel() {
 
 async function requireAdminAccess(actionLabel) {
   if (!api.available) {
-    toast("Backend offline. Admin-Absicherung greift erst mit node server.js.");
+    toast("Standalone-Modus: Diese Admin-Funktion ist in der gehosteten App nicht aktiv.");
     return false;
   }
   const status = await apiGet("/api/admin/status");
@@ -1267,6 +1686,9 @@ async function requireAdminAccess(actionLabel) {
   }
   state.adminSecurity.configured = Boolean(status.configured);
   if (status.unlocked && state.adminSecurity?.token) return true;
+  if (state.adminSecurity?.token && !status.unlocked) {
+    clearExpiredAdminClientState();
+  }
   openAdminAccessModal(actionLabel);
   toast(`${actionLabel} braucht Admin-Freigabe.`);
   return false;
@@ -1339,10 +1761,7 @@ async function loginAdmin() {
 
 async function logoutAdmin() {
   await apiPost("/api/admin/logout", {});
-  state.adminSecurity.token = "";
-  state.adminSecurity.expires_at = "";
-  saveState();
-  updateAdminButtonLabel();
+  clearExpiredAdminClientState();
   closeModal();
   toast("Admin-Modus gesperrt.");
 }
@@ -1368,7 +1787,7 @@ async function askRick(prompt) {
   }
 
   return {
-    answer: `${response.text}\n\nProvider: ${response.provider === "ollama" ? `Ollama Rick-C63 local model (${response.model})` : response.provider}`
+    answer: `${response.text}\n\nProvider: ${response.provider === "openai" ? `OpenAI (${response.model || "gpt-5.4-codex"})` : response.provider === "ollama" ? `Ollama Rick-C63 local model (${response.model})` : response.provider}\nPreferred main model: ${getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex"}`
   };
 }
 
@@ -1471,11 +1890,24 @@ function uniqueList(items) {
   return [...new Set(items.filter(Boolean))];
 }
 
+function clearExpiredAdminClientState() {
+  if (!state.adminSecurity) state.adminSecurity = {};
+  state.adminSecurity.token = "";
+  state.adminSecurity.expires_at = "";
+  clearAdminProtectedState();
+  saveState();
+  if (document.readyState !== "loading") {
+    renderAll();
+    updateAdminButtonLabel();
+  }
+}
+
 async function apiGet(path) {
   try {
     const headers = { accept: "application/json" };
     if (state.adminSecurity?.token) headers["x-admin-token"] = state.adminSecurity.token;
-    const response = await fetch(path, { headers });
+    const response = await fetch(apiUrl(path), { headers });
+    if (response.status === 403 && state.adminSecurity?.token) clearExpiredAdminClientState();
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -1487,11 +1919,12 @@ async function apiPost(path, body) {
   try {
     const headers = { "content-type": "application/json", accept: "application/json" };
     if (state.adminSecurity?.token) headers["x-admin-token"] = state.adminSecurity.token;
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       method: "POST",
       headers,
       body: JSON.stringify(body)
     });
+    if (response.status === 403 && state.adminSecurity?.token) clearExpiredAdminClientState();
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -1586,7 +2019,8 @@ function renderContext() {
   const memories = (state.memories || []).slice(0, 5);
   els.contextPanel.innerHTML = `
     <div class="mini-card"><h3>User</h3><p>${safe(state.user.name)} / ${safe(state.user.plan)}</p></div>
-    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Frontend-only"} / Ollama ${api.health?.ollama?.reachable ? "connected" : "offline"} / ${safe(api.health?.ollama?.model || "qwen3-coder:30b")}</p></div>
+    <div class="mini-card"><h3>Backend</h3><p>${api.available ? "Online" : "Standalone mode"} / Ollama ${api.health?.ollama?.reachable ? "connected" : "optional"} / ${safe(api.health?.ollama?.model || "qwen3-coder:30b")}</p></div>
+    <div class="mini-card"><h3>Model stack</h3><p>Main: ${safe(getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex")}<br>Coding: ${safe(getModelById(state.selectedCodingModel)?.label || "GPT-5.4 Codex")}</p></div>
     <div class="mini-card"><h3>Current Target</h3><p>${safe(target ? target.title : "No target selected")}</p></div>
     <div class="mini-card"><h3>Current Report</h3><p>${safe(report ? report.summary : "No report yet")}</p></div>
     <div class="mini-card"><h3>Training Job</h3><p>${safe(trainingJob ? `${trainingJob.topic} / ${trainingJob.status}` : "No training job selected")}</p></div>
@@ -1814,26 +2248,71 @@ function renderBuilderSettings() {
     els.builderSettings.innerHTML = "";
     return;
   }
+  const targetId = state.builderTarget || "web-app";
+  const target = buildTargets.find((item) => item.id === targetId) || buildTargets[0];
+  const guidance = buildTargetGuidance(target.id);
   els.builderSettings.innerHTML = `
     <label>App name<input id="builderAppName" value="${escapeHtml(blueprint.project_name)}"></label>
     <label>What should it do?<textarea id="builderGoal" rows="3">${escapeHtml(blueprint.problem)}</textarea></label>
     <label>Delivery target<select id="builderTarget">
       ${buildTargets.map((item) => `<option value="${item.id}" ${state.builderTarget === item.id ? "selected" : ""}>${item.label} - ${item.level}</option>`).join("")}
     </select></label>
+    <div class="delivery-honesty ${guidance.tone}">
+      <span class="status-badge ${guidance.tone}">${escapeHtml(guidance.badge)}</span>
+      <strong>${escapeHtml(target.label)} · ${escapeHtml(target.output)}</strong>
+      <p>${escapeHtml(guidance.text)}</p>
+    </div>
+    <label>Main model<select id="builderMainModel">
+      ${MODEL_CATALOG.map((item) => `<option value="${item.id}" ${state.selectedMainModel === item.id ? "selected" : ""}>${item.label} · ${item.provider} · ${item.tier}</option>`).join("")}
+    </select></label>
+    <label>Coding model<select id="builderCodingModel">
+      ${MODEL_CATALOG.map((item) => `<option value="${item.id}" ${state.selectedCodingModel === item.id ? "selected" : ""}>${item.label} · ${item.provider} · ${item.tier}</option>`).join("")}
+    </select></label>
+    <div class="button-row">
+      <button class="secondary-button" type="button" id="presetFreeOnly">Free only preset</button>
+      <button class="secondary-button" type="button" id="presetBestQuality">Best quality preset</button>
+    </div>
     <label>Feeling<select id="builderFeeling">
       ${["Cosmic premium", "Developer cockpit", "Creative studio", "Conversion machine", "Learning engine"].map((item) => `<option ${state.builderFeeling === item ? "selected" : ""}>${item}</option>`).join("")}
     </select></label>
+    <label class="checkbox-row"><input type="checkbox" id="builderSwarmEnabled" ${state.builderSwarmEnabled ? "checked" : ""}> Agenten-Schwarm aktivieren</label>
+    <div class="swarm-grid">
+      ${SWARM_AGENT_LIBRARY.map((agent) => `<label class="swarm-card"><input type="checkbox" data-swarm-agent="${agent.id}" ${state.builderSwarmAgents?.includes(agent.id) ? "checked" : ""}><strong>${agent.name}</strong><small>${agent.summary}</small></label>`).join("")}
+    </div>
+    <div class="delivery-honesty ready">
+      <span class="status-badge ready">Model choices</span>
+      <strong>Main: ${escapeHtml(getModelById(state.selectedMainModel)?.label || "GPT-5.4 Codex")}</strong>
+      <p>Coding: ${escapeHtml(getModelById(state.selectedCodingModel)?.label || "GPT-5.4 Codex")}. Codex ist standardmäßig gesetzt; dazu 5 starke Free-Modelle plus weitere Premium-Optionen.</p>
+    </div>
     <button class="secondary-button full-width" id="applyBuilderSettings">Apply Rick-C63 Settings</button>
   `;
+  document.querySelector("#presetFreeOnly").addEventListener("click", () => {
+    document.querySelector("#builderMainModel").value = "oss";
+    document.querySelector("#builderCodingModel").value = "code";
+    toast("Free-only Preset gesetzt.");
+  });
+  document.querySelector("#presetBestQuality").addEventListener("click", () => {
+    document.querySelector("#builderMainModel").value = "codex";
+    document.querySelector("#builderCodingModel").value = "codex";
+    toast("Best-quality Preset gesetzt.");
+  });
   document.querySelector("#applyBuilderSettings").addEventListener("click", () => {
     blueprint.project_name = document.querySelector("#builderAppName").value.trim() || blueprint.project_name;
     blueprint.problem = document.querySelector("#builderGoal").value.trim() || blueprint.problem;
     state.builderTarget = document.querySelector("#builderTarget").value;
+    state.selectedMainModel = document.querySelector("#builderMainModel").value;
+    state.selectedCodingModel = document.querySelector("#builderCodingModel").value;
     state.builderFeeling = document.querySelector("#builderFeeling").value;
+    state.builderSwarmEnabled = document.querySelector("#builderSwarmEnabled").checked;
+    state.builderSwarmAgents = [...document.querySelectorAll("[data-swarm-agent]:checked")].map((input) => input.dataset.swarmAgent);
     saveState();
     renderAll();
     toast("Builder-Einstellungen gespeichert.");
   });
+}
+
+function getModelById(id) {
+  return MODEL_CATALOG.find((item) => item.id === id) || MODEL_CATALOG[0];
 }
 
 function renderBlueprintEditor() {
@@ -2050,7 +2529,7 @@ async function handleTrainingSubmit(event) {
     return;
   }
   if (!api.available) {
-    toast("Backend offline. Start node server.js to run the automation.");
+    toast("Backend offline. Start npm start to run the automation.");
     return;
   }
   if (!(await requireAdminAccess("Training-Automation starten"))) return;
@@ -2255,9 +2734,10 @@ function saveProductPackage(product, blueprint, report) {
   project.updated_at = new Date().toISOString();
   remember(`Saved product package: ${product.name}`);
   saveState();
+  return project;
 }
 
-function connectProductToPages() {
+async function connectProductToPages() {
   const blueprint = getCurrentBlueprint() || createBlueprintFromReport(getCurrentReport());
   const report = getCurrentReport();
   if (!blueprint || !report) {
@@ -2265,15 +2745,53 @@ function connectProductToPages() {
     return;
   }
   const product = generateProductPackage(blueprint, report, "Connect to pages");
+  const project = ensureEmpireProjectForBlueprint(blueprint, report, "Connect Product to Pages");
   saveProductPackage(product, blueprint, report);
-  const html = `<h3>${product.name} verbinden</h3>
-    <p>Diese Verbindungslogik ist vorbereitet. Als naechstes kann ein echter Page-Registry-Bereich entstehen, wo du auswaehlst: Home, Rick Lab, Empire Dashboard oder neue eigene Seite.</p>
-    <h4>Aktuelle Ziel-Verbindungen</h4>
-    ${list(product.connections)}
-    <h4>Naechster technischer Schritt</h4>
-    <p>Wir bauen eine Page Registry: jedes Produkt bekommt eine page_id, route, navigation label, components und data bindings.</p>`;
-  openModal("Connect Product to My Pages", html);
-  toast("Produkt-Verbindung vorbereitet.");
+
+  if (!api.available) {
+    openModal("Connect Product to My Pages", `<h3>${product.name}</h3><p>Backend offline. Das Produktpaket ist lokal gespeichert, aber fuer den echten Edit-Loop musst du den lokalen Server starten und dann einen Coding Workspace erzeugen.</p><h4>Naechster Schritt</h4><p>Starte <code>npm start</code>, entsperre Admin und verbinde das Produkt erneut. Dann wird automatisch ein editierbarer Workspace angelegt.</p>`);
+    toast("Produkt lokal gespeichert. Fuer echten Edit-Loop braucht es den lokalen Server.");
+    return;
+  }
+
+  if (!(await requireAdminAccess("Produkt mit Workspace verbinden"))) return;
+  const sync = await apiPost("/api/db/sync", { db: state });
+  if (!sync?.ok) {
+    toast("Projektzustand konnte vor dem Verbinden nicht synchronisiert werden.");
+    return;
+  }
+
+  await refreshWorkspaces();
+  const existingWorkspace = (state.workspaces || []).find((item) => item.project_id === (project?.id || "") && item.adapter === "web-pwa");
+  if (existingWorkspace?.id) {
+    state.currentWorkspaceId = existingWorkspace.id;
+    state.currentWorkspaceFile = "";
+    await refreshWorkspaces(existingWorkspace.id);
+    routeTo("workspace");
+    openModal("Connect Product to My Pages", `<h3>${product.name}</h3><p>Verbindung steht bereits: Rick-C63 nutzt den vorhandenen Coding Workspace weiter, statt fuer denselben Empire-Project Duplikate anzulegen.</p><h4>Workspace</h4><p>${safe(existingWorkspace.name)} · ${safe(existingWorkspace.adapter_label || existingWorkspace.adapter)}</p><h4>Naechster Schritt</h4><p>Im Workspace kannst du weiter Dateien oeffnen, speichern, Preview laden und den allowlisted Check-/Test-Loop fahren.</p>`);
+    toast("Vorhandenen Coding Workspace wiederverwendet.");
+    return;
+  }
+
+  const workspaceName = `${blueprint.project_name || product.name} Workspace`;
+  const workspaceResponse = await apiPost("/api/workspaces", {
+    name: workspaceName,
+    project_id: project?.id || "",
+    adapter: "web-pwa"
+  });
+
+  if (!workspaceResponse?.workspace?.id) {
+    openModal("Connect Product to My Pages", `<h3>${product.name}</h3><p>Das Produktpaket wurde synchronisiert, aber der editierbare Workspace konnte noch nicht erstellt werden.</p><h4>Aktuelle Ziel-Verbindungen</h4>${list(product.connections)}<h4>Fehler</h4><p>${safe(workspaceResponse?.error || "Workspace creation failed.")}</p>`);
+    toast("Workspace konnte nicht erstellt werden.");
+    return;
+  }
+
+  state.currentWorkspaceId = workspaceResponse.workspace.id;
+  state.currentWorkspaceFile = "";
+  await refreshWorkspaces(workspaceResponse.workspace.id);
+  routeTo("workspace");
+  openModal("Connect Product to My Pages", `<h3>${product.name}</h3><p>Verbindung steht: Rick-C63 hat einen echten Coding Workspace erzeugt, damit du die generierte Software weiter bearbeiten und pruefen kannst.</p><h4>Workspace</h4><p>${safe(workspaceResponse.workspace.name)} · ${safe(workspaceResponse.workspace.adapter_label || workspaceResponse.workspace.adapter)}</p><h4>Naechster Schritt</h4><p>Im Workspace kannst du jetzt Dateien oeffnen, speichern, Preview laden und den allowlisted Check-/Test-Loop fahren.</p>`);
+  toast("Produkt mit echtem Coding Workspace verbunden.");
 }
 
 function generateTasks() {
@@ -2415,6 +2933,17 @@ async function createCodingWorkspace(event) {
   event.preventDefault();
   if (!(await requireAdminAccess("Workspace erstellen"))) return;
   const name = els.workspaceName.value.trim() || getCurrentBlueprint()?.project_name || "New Coding Workspace";
+  const projectId = els.workspaceProject.value;
+  const adapter = els.workspaceAdapter.value;
+  const existingWorkspace = (state.workspaces || []).find((item) => item.project_id === projectId && item.adapter === adapter);
+  if (projectId && existingWorkspace?.id) {
+    state.currentWorkspaceId = existingWorkspace.id;
+    state.currentWorkspaceFile = "";
+    await refreshWorkspaces(existingWorkspace.id);
+    routeTo("workspace");
+    toast("Vorhandenen Workspace geöffnet.");
+    return;
+  }
   const sync = await apiPost("/api/db/sync", { db: state });
   if (!sync?.ok) {
     toast("Project state could not be synchronized before workspace creation.");
@@ -2422,8 +2951,8 @@ async function createCodingWorkspace(event) {
   }
   const response = await apiPost("/api/workspaces", {
     name,
-    project_id: els.workspaceProject.value,
-    adapter: els.workspaceAdapter.value
+    project_id: projectId,
+    adapter
   });
   if (!response?.workspace) {
     toast("Workspace konnte nicht erstellt werden.");
@@ -2443,7 +2972,8 @@ function renderWorkspaces() {
   if (!els.workspaceList) return;
   const workspaces = state.workspaces || [];
   const current = getCurrentWorkspace();
-  els.workspaceProject.innerHTML = `<option value="">No linked Empire project</option>${state.empireProjects.map((project) => `<option value="${safe(project.id)}">${safe(project.name)}</option>`).join("")}`;
+  const preferredProjectId = current?.project_id || getCurrentEmpireProject()?.id || "";
+  els.workspaceProject.innerHTML = `<option value="">No linked Empire project</option>${state.empireProjects.map((project) => `<option value="${safe(project.id)}" ${project.id === preferredProjectId ? "selected" : ""}>${safe(project.name)}</option>`).join("")}`;
   els.workspaceList.innerHTML = workspaces.length ? workspaces.map((workspace) => `
     <button class="mini-card workspace-select ${workspace.id === current?.id ? "selected" : ""}" data-workspace-id="${safe(workspace.id)}">
       <strong>${safe(workspace.name)}</strong>
@@ -2459,18 +2989,32 @@ function renderWorkspaces() {
   if (!current) {
     els.workspaceOverview.innerHTML = emptyState("Create a workspace to turn the blueprint into editable local project files.");
     els.workspaceTree.innerHTML = "";
+    if (els.workspacePreviewPane) els.workspacePreviewPane.innerHTML = "<p class=\"muted\">No preview yet. Generate or select a workspace first.</p>";
+    if (els.workspaceTerminalHints) els.workspaceTerminalHints.innerHTML = "";
+    if (els.workspaceTerminalOutput) els.workspaceTerminalOutput.innerHTML = "<p class=\"muted\">No terminal history yet.</p>";
+    if (els.workspaceSwarmOutput) els.workspaceSwarmOutput.innerHTML = "<p class=\"muted\">No swarm run yet.</p>";
     els.workspaceRuns.innerHTML = "";
     els.workspaceActivity.innerHTML = "";
     els.workspaceEditor.value = "";
     return;
   }
+  const linkedProject = state.empireProjects.find((project) => project.id === current.project_id);
   els.workspaceOverview.innerHTML = `
     <div><span class="status-badge ${current.status === "verified" ? "complete" : "running"}">${safe(current.status)}</span>
-    <h3>${safe(current.name)}</h3><p>${safe(current.adapter_label || current.adapter)} / ${safe(current.adapter_status)}</p></div>
+    <h3>${safe(current.name)}</h3><p>${safe(current.adapter_label || current.adapter)} / ${safe(current.adapter_status)}</p><small>${safe(linkedProject ? `Linked Empire project: ${linkedProject.name}` : "No linked Empire project")}</small></div>
     <div class="workspace-capabilities"><strong>Capabilities</strong>${list(current.capabilities || [])}<strong>Readiness: ${safe(current.readiness?.level || "unknown")}</strong>${list((current.readiness?.checks || []).map((item) => `${item.label}: ${item.status} - ${item.detail}`))}<strong>Limits</strong>${list(current.limits || [])}</div>`;
   if (els.workspacePreviewButton) {
     els.workspacePreviewButton.disabled = !current.preview_url;
     els.workspacePreviewButton.title = current.readiness?.preview?.detail || "";
+  }
+  if (els.workspacePreviewPane) {
+    els.workspacePreviewPane.innerHTML = current.preview_url
+      ? `<iframe class="workspace-preview-frame" src="${safe(current.preview_url)}" title="${safe(current.name)} preview" sandbox="allow-scripts"></iframe>`
+      : `<p class="muted">This adapter has no browser preview. ${safe(current.readiness?.preview?.detail || "")}</p>`;
+  }
+  if (els.workspaceTerminalHints) {
+    const hints = current.terminal_allowed || ["pwd", "ls", "find", "cat", "head", "tail", "grep", "git status", "node --check", "npm run check", "write src/app.js", "append README.md", "replace src/app.js"];
+    els.workspaceTerminalHints.innerHTML = `<small>Allowed: ${hints.map((item) => safe(item)).join(" · ")}<br>Payload commands: <strong>write path</strong>, <strong>append path</strong>, <strong>replace path</strong> using the payload box.</small>`;
   }
   const tree = current.tree || [];
   els.workspaceTree.innerHTML = tree.length ? tree.map((item) => item.type === "directory"
@@ -2483,6 +3027,21 @@ function renderWorkspaces() {
       <div><strong>${safe(run.command)}</strong><span class="status-badge ${run.status === "passed" ? "complete" : "failed"}">${safe(run.status)}</span><small>${run.duration_ms} ms</small></div>
       <pre>${safe(run.output || "No output")}</pre>
     </article>`).join("") : "<p class=\"muted\">No build or test runs yet.</p>";
+  els.workspaceTerminalOutput.innerHTML = (current.terminal_history || []).length ? current.terminal_history.map((entry) => `
+    <article class="workspace-run ${safe(entry.status || "passed")}">
+      <div><strong>$ ${safe(entry.command)}</strong><span class="status-badge ${entry.status === "passed" ? "complete" : "failed"}">${safe(entry.status || "done")}</span><small>${safe(entry.duration_ms || 0)} ms</small></div>
+      <pre>${safe(entry.output || "No output")}</pre>
+    </article>`).join("") : "<p class=\"muted\">No terminal history yet.</p>";
+  if (els.workspaceSwarmOutput) {
+    const swarmRuns = current.swarm_runs || [];
+    els.workspaceSwarmOutput.innerHTML = swarmRuns.length ? swarmRuns.map((run) => `
+      <article class="workspace-run ${safe(run.status || "passed")}">
+        <div><strong>Run Swarm</strong><span class="status-badge ${run.status === "passed" ? "complete" : "failed"}">${safe(run.status || "done")}</span><small>${safe(run.duration_ms || 0)} ms</small></div>
+        <p><strong>Merge:</strong> ${safe(run.merge_summary || "No merge summary")}</p>
+        <div>${list((run.agents || []).map((agent) => `${agent.name}: ${agent.summary}`))}</div>
+        <pre>${safe(run.output || "No swarm output")}</pre>
+      </article>`).join("") : "<p class=\"muted\">No swarm run yet.</p>";
+  }
   els.workspaceActivity.innerHTML = (current.activity || []).length ? current.activity.slice(0, 8).map((item) => `
     <div class="workspace-activity-item"><strong>${safe(item.type)}</strong><span>${safe(item.detail)}</span><small>${safe(new Date(item.created_at).toLocaleString())}</small></div>
   `).join("") : "<p class=\"muted\">No workspace activity yet.</p>";
@@ -2506,6 +3065,9 @@ function openWorkspacePreview() {
   if (!workspace?.preview_url) {
     toast("This adapter has no browser preview. Review its external toolchain requirements.");
     return;
+  }
+  if (els.workspacePreviewPane) {
+    els.workspacePreviewPane.scrollIntoView({ behavior: "smooth", block: "center" });
   }
   openModal(`${workspace.name} Preview`, `<iframe class="workspace-preview-frame" src="${safe(workspace.preview_url)}" title="${safe(workspace.name)} preview" sandbox="allow-scripts"></iframe>`);
 }
@@ -2544,6 +3106,49 @@ async function runWorkspaceLoop(command) {
   }
   await refreshWorkspaces(workspace.id);
   toast(`${command}: ${response.run.status} in ${response.run.duration_ms} ms.`);
+}
+
+async function runWorkspaceTerminal(event) {
+  event?.preventDefault();
+  const workspace = getCurrentWorkspace();
+  const command = els.workspaceTerminalInput?.value.trim() || "";
+  const payload = els.workspaceTerminalPayload?.value || "";
+  if (!workspace) {
+    toast("Create or select a workspace first.");
+    return;
+  }
+  if (!command) {
+    toast("Enter a terminal command first.");
+    return;
+  }
+  if (!(await requireAdminAccess("Workspace Terminal"))) return;
+  toast(`Running terminal command: ${command}`);
+  const response = await apiPost(`/api/workspaces/${encodeURIComponent(workspace.id)}/terminal`, { command, payload });
+  if (!response?.entry) {
+    toast(response?.error || "Terminal command failed.");
+    return;
+  }
+  if (els.workspaceTerminalInput) els.workspaceTerminalInput.value = "";
+  if (els.workspaceTerminalPayload && ["write", "append", "replace"].some((prefix) => command.startsWith(prefix))) els.workspaceTerminalPayload.value = "";
+  await refreshWorkspaces(workspace.id);
+  toast(`Terminal: ${response.entry.status} in ${response.entry.duration_ms} ms.`);
+}
+
+async function runWorkspaceSwarm() {
+  const workspace = getCurrentWorkspace();
+  if (!workspace) {
+    toast("Create or select a workspace first.");
+    return;
+  }
+  if (!(await requireAdminAccess("Run Swarm"))) return;
+  toast("Agenten-Schwarm läuft jetzt über Workspace, Fehler, Architektur und Tool-Ideen...");
+  const response = await apiPost(`/api/workspaces/${encodeURIComponent(workspace.id)}/swarm`, {});
+  if (!response?.run) {
+    toast(response?.error || "Swarm run failed.");
+    return;
+  }
+  await refreshWorkspaces(workspace.id);
+  toast(`Swarm: ${response.run.status} in ${response.run.duration_ms} ms.`);
 }
 
 function miniReportCard(report) {
@@ -2624,6 +3229,24 @@ function seedIfEmpty() {
   createBlueprintFromReport(report);
 }
 
+function resolveApiBase() {
+  const queryValue = new URLSearchParams(location.search).get("api") || "";
+  if (queryValue) {
+    try {
+      const normalized = new URL(queryValue, location.href).origin;
+      localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
+      return normalized;
+    } catch {
+    }
+  }
+  return localStorage.getItem(API_BASE_STORAGE_KEY) || "";
+}
+
+function apiUrl(path) {
+  if (!api.base) return path;
+  return `${api.base.replace(/\/$/, "")}${path}`;
+}
+
 function loadState() {
   try {
     const saved = migrateState(JSON.parse(localStorage.getItem(STORAGE_KEY)) || {});
@@ -2638,6 +3261,7 @@ function loadState() {
       projectAudit: saved.projectAudit || null
     };
   } catch {
+    localStorage.removeItem(STORAGE_KEY);
     return structuredClone(defaultState);
   }
 }
@@ -2729,12 +3353,252 @@ function toast(message) {
 
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/plain" });
+  downloadBlob(filename, blob, "text/plain");
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function createStandalonePwaBundle(product, formats = ["web"]) {
+  const expanded = expandGeneratedProduct(product);
+  const icon192 = createPngIconDataUrl(expanded, 192);
+  const icon512 = createPngIconDataUrl(expanded, 512);
+  const files = {
+    "index.html": standalonePwaHtml(expanded),
+    "app.js": standaloneProductJs(expanded),
+    "styles.css": standaloneProductCss(expanded),
+    "manifest.webmanifest": JSON.stringify({
+      name: expanded.name,
+      short_name: expanded.name.slice(0, 24),
+      description: expanded.pitch || "Generated app",
+      start_url: "./index.html",
+      scope: "./",
+      display: "standalone",
+      background_color: expanded.palette?.bg || "#050610",
+      theme_color: expanded.palette?.bg || "#050610",
+      icons: [
+        { src: "icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: "icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ]
+    }, null, 2),
+    "sw.js": standalonePwaServiceWorker(),
+    "product.json": JSON.stringify(expanded, null, 2),
+    "README-PWABUILDER.txt": `PWABuilder upload package for ${expanded.name}.\n\nOpen or host these files and point PWABuilder at the app URL.\nFormats requested: ${formats.join(", ")}.\n`
+  };
+  const binaryFiles = {
+    "icons/icon-192.png": dataUrlToUint8Array(icon192),
+    "icons/icon-512.png": dataUrlToUint8Array(icon512)
+  };
+  const zip = createBrowserZip(files, binaryFiles);
+  return {
+    filename: `${expanded.slug || "generated-app"}-pwabuilder-upload.zip`,
+    blob: new Blob([zip], { type: "application/zip" }),
+    mimeType: "application/zip"
+  };
+}
+
+function standalonePwaHtml(product) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="${escapeHtml(product.palette?.bg || "#050610")}">
+  <meta name="description" content="${escapeHtml(product.pitch || "Generated app")}">
+  <title>${escapeHtml(product.name)}</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="cosmos"></div>
+  <header>
+    <strong>${escapeHtml(product.name)}</strong>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Generated by Rick-C63</p>
+      <h1>${escapeHtml(product.name)}</h1>
+      <p>${escapeHtml(product.pitch || "Generated software product.")}</p>
+      <p class="delivery">PWA / Complete standalone app</p>
+      <div class="actions">
+        <button id="saveProject">Save Project</button>
+        <button id="generatePlan">Generate Plan</button>
+        <button id="exportSummary">Export JSON</button>
+      </div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="workspace">
+      <aside>
+        <h2>Screens</h2>
+        <div id="screens"></div>
+      </aside>
+      <section>
+        <h2>Live Builder</h2>
+        <label>Project note<textarea id="note" rows="5" placeholder="Describe the next feature..."></textarea></label>
+        <button id="addNote">Add Note</button>
+        <div id="notes"></div>
+        <div class="inline-form">
+          <label>Project record title<input id="recordTitle" type="text" placeholder="e.g. Customer portal"></label>
+          <label>Status<select id="recordStatus"><option>Planned</option><option>In Progress</option><option>Ready</option></select></label>
+          <button id="addRecord">Add Record</button>
+        </div>
+      </section>
+    </section>
+    <section class="grid two">
+      <div class="card-panel"><h2>Current Screen</h2><div id="screenDetail"></div></div>
+      <div class="card-panel"><h2>Build Plan</h2><div id="plan"></div></div>
+    </section>
+    <section>
+      <h2>Project Records</h2>
+      <div class="grid two" id="records"></div>
+    </section>
+    <section>
+      <h2>Modules</h2>
+      <div id="modules"></div>
+    </section>
+  </main>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+        await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+      });
+    }
+  </script>
+  <script src="app.js?v=4"></script>
+</body>
+</html>`;
+}
+
+function standalonePwaServiceWorker() {
+  return `const CACHE_NAME = 'rick-c63-generated-pwa-v1';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  self.skipWaiting();
+});
+self.addEventListener('activate', (event) => {
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((key) => key !== CACHE_NAME ? caches.delete(key) : Promise.resolve()))));
+  self.clients.claim();
+});
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => caches.match('./index.html'))));
+});`;
+}
+
+function createPngIconDataUrl(product, size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const palette = product.palette || { bg: '#050610', accent: '#53ff9d', second: '#1dbdff', third: '#ff3edb' };
+  ctx.fillStyle = palette.bg;
+  ctx.fillRect(0, 0, size, size);
+  const grad = ctx.createRadialGradient(size * 0.5, size * 0.45, size * 0.08, size * 0.5, size * 0.5, size * 0.48);
+  grad.addColorStop(0, palette.accent);
+  grad.addColorStop(0.45, palette.second);
+  grad.addColorStop(1, palette.third);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.5, size * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = palette.accent;
+  ctx.lineWidth = Math.max(6, size * 0.03);
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.5, size * 0.4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#03131d';
+  ctx.font = `${Math.round(size * 0.2)}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('R63', size * 0.5, size * 0.52);
+  return canvas.toDataURL('image/png');
+}
+
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.split(',')[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function createBrowserZip(textFiles, binaryFiles = {}) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const entries = [
+    ...Object.entries(textFiles).map(([name, content]) => [name, new TextEncoder().encode(String(content ?? ''))]),
+    ...Object.entries(binaryFiles)
+  ];
+  for (const [name, data] of entries) {
+    const fileName = new TextEncoder().encode(name.replaceAll('\\', '/'));
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + fileName.length + data.length);
+    const view = new DataView(local.buffer);
+    view.setUint32(0, 0x04034b50, true);
+    view.setUint16(4, 20, true);
+    view.setUint16(8, 0, true);
+    view.setUint16(10, 0, true);
+    view.setUint16(12, 0, true);
+    view.setUint16(14, 0, true);
+    view.setUint32(14, crc, true);
+    view.setUint32(18, data.length, true);
+    view.setUint32(22, data.length, true);
+    view.setUint16(26, fileName.length, true);
+    local.set(fileName, 30);
+    local.set(data, 30 + fileName.length);
+    localParts.push(local);
+
+    const central = new Uint8Array(46 + fileName.length);
+    const cview = new DataView(central.buffer);
+    cview.setUint32(0, 0x02014b50, true);
+    cview.setUint16(4, 20, true);
+    cview.setUint16(6, 20, true);
+    cview.setUint32(16, crc, true);
+    cview.setUint32(20, data.length, true);
+    cview.setUint32(24, data.length, true);
+    cview.setUint16(28, fileName.length, true);
+    cview.setUint32(42, offset, true);
+    central.set(fileName, 46);
+    centralParts.push(central);
+    offset += local.length;
+  }
+  const centralSize = centralParts.reduce((sum, item) => sum + item.length, 0);
+  const end = new Uint8Array(22);
+  const eview = new DataView(end.buffer);
+  eview.setUint32(0, 0x06054b50, true);
+  eview.setUint16(8, entries.length, true);
+  eview.setUint16(10, entries.length, true);
+  eview.setUint32(12, centralSize, true);
+  eview.setUint32(16, offset, true);
+  return new Blob([...localParts, ...centralParts, end]);
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0 ^ (-1);
+  for (let index = 0; index < bytes.length; index += 1) crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[index]) & 0xff];
+  return (crc ^ (-1)) >>> 0;
 }
 
 function escapeHtml(value) {

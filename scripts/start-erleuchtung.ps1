@@ -13,6 +13,7 @@ if (-not (Test-Path -LiteralPath $models)) {
 $env:OLLAMA_MODELS = $models
 $env:OLLAMA_HOST = "127.0.0.1:11434"
 $env:RICK_C63_OLLAMA_MODEL = "qwen3-coder:30b"
+$port = if ($env:PORT) { $env:PORT } else { "8787" }
 
 powershell -ExecutionPolicy Bypass -File scripts\ensure-rick-model.ps1
 
@@ -22,7 +23,7 @@ if (-not (Test-Path -LiteralPath $portableNode) -and -not (Get-Command node.exe 
 }
 
 Write-Host "Starting Erleuchtung..."
-Write-Host "Open: http://localhost:8787"
+Write-Host "Open: http://localhost:$port"
 
 if (Test-Path -LiteralPath $portableNode) {
   & $portableNode server.js

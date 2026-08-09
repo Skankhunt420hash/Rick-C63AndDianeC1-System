@@ -48,7 +48,7 @@ Then open:
 http://localhost:8787
 ```
 
-The server binds to `127.0.0.1` by default. Keep it local unless you add a production authentication and network security layer.
+If you override `PORT`, open that port instead. The server binds to `127.0.0.1` by default. Keep it local unless you add a production authentication and network security layer.
 
 ## Software factory workspace
 

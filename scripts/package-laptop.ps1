@@ -61,6 +61,8 @@ Open:
 http://localhost:8787
 ```
 
+If you override `PORT`, open that port instead.
+
 The installer downloads portable Node.js, the local Ollama runtime and the approximately 18GB qwen3-coder:30b model into this app folder. On later starts, the model is checked and downloaded only if it is missing.
 
 Self-Healing Doctor:

@@ -3,6 +3,9 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $log = Join-Path $root "data\doctor-start.log"
+$port = if ($env:PORT) { $env:PORT } else { "8787" }
+$healthUrl = "http://127.0.0.1:$port/api/health"
+$openUrl = "http://localhost:$port"
 
 try {
   powershell -ExecutionPolicy Bypass -File scripts\self-healing-doctor.ps1 *>> $log
@@ -13,15 +16,15 @@ try {
   $env:RICK_C63_OLLAMA_MODEL = "qwen3-coder:30b"
 
   try {
-    Invoke-WebRequest -Uri "http://127.0.0.1:8787/api/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
+    Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2 | Out-Null
   } catch {
     Start-Process -FilePath $node -ArgumentList "server.js" -WorkingDirectory $root -WindowStyle Hidden | Out-Null
   }
 
   for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
     try {
-      Invoke-WebRequest -Uri "http://127.0.0.1:8787/api/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
-      Start-Process "http://localhost:8787"
+      Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2 | Out-Null
+      Start-Process $openUrl
       exit 0
     } catch {
       Start-Sleep -Seconds 1

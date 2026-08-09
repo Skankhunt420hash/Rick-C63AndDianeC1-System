@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=4">
   </head>
   <body>
     <div class="cosmos" aria-hidden="true">
@@ -266,8 +266,11 @@
                 <button class="secondary-button" data-workspace-command="check">Check</button>
                 <button class="secondary-button" data-workspace-command="test">Test</button>
                 <button class="secondary-button" data-workspace-command="build-inspect">Build Inspect</button>
+                <button class="secondary-button" id="workspaceRunSwarmButton">Run Swarm</button>
                 <button class="secondary-button" id="workspacePreviewButton">Open Preview</button>
               </div>
+              <div class="section-heading"><span>Live Preview</span><small>Bedienbar vor dem Export</small></div>
+              <div id="workspacePreviewPane" class="workspace-preview-pane"></div>
               <div class="workspace-editor-layout">
                 <div>
                   <div class="section-heading"><span>Project Files</span><small>Safe editable files only</small></div>
@@ -279,6 +282,16 @@
                   <button id="workspaceSaveFile" class="primary-button full-width" type="button">Save File</button>
                 </div>
               </div>
+              <div class="section-heading"><span>Workspace Terminal</span><small>Agent cockpit for file inspection and build commands</small></div>
+              <form id="workspaceTerminalForm" class="workspace-terminal-form">
+                <input id="workspaceTerminalInput" type="text" placeholder="e.g. ls web | cat README.md | npm run check">
+                <textarea id="workspaceTerminalPayload" rows="5" placeholder="Optional payload for write/append/replace commands"></textarea>
+                <button class="secondary-button" type="submit">Run</button>
+              </form>
+              <div id="workspaceTerminalHints" class="workspace-terminal-hints"></div>
+              <div id="workspaceTerminalOutput" class="workspace-terminal-output"></div>
+              <div class="section-heading"><span>Swarm Merge</span><small>Builder, fixer, architect, toolsmith and friends</small></div>
+              <div id="workspaceSwarmOutput" class="workspace-terminal-output"></div>
               <div class="section-heading"><span>Activity</span><small>Recent workspace changes</small></div>
               <div id="workspaceActivity" class="workspace-activity"></div>
               <div class="section-heading"><span>Build & Test History</span><small>Status, duration and structured output</small></div>
@@ -447,7 +460,14 @@
       </div>
     </div>
 
-    <script src="app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', async () => {
+          const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+          await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+        });
+      }
+    </script>
+    <script src="app.js?v=4"></script>
   </body>
 </html>
-

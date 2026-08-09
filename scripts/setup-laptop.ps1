@@ -17,3 +17,4 @@ powershell -ExecutionPolicy Bypass -File scripts\ensure-rick-model.ps1
 Write-Host ""
 Write-Host "Setup finished. Start the app with:"
 Write-Host "powershell -ExecutionPolicy Bypass -File scripts\start-erleuchtung.ps1"
+Write-Host "Optional: set PORT before start if you do not want the default 8787."
